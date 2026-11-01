@@ -35,7 +35,7 @@ With SDL2 installed (`libsdl2-dev`), `--live` plays the game in a window with so
 ./hosttest/sal_host ~/roms/arcade lifefrce --live --scale 4
 ```
 
-The keys are those of a USB keyboard on the board, mapped as on the board: the arrow keys move, Z shoots, X is the power-up, C or V the missile (Lifeforce Japan), A inserts a coin when released and S is the start button; 5, 1 and 2 work as in MAME (coin, 1 player start, 2 player start). A + S resets the game. Space pauses, N steps one frame while paused, Tab (held) runs fast, F12 saves the frame on screen and Esc quits.
+The keys are those of a USB keyboard on the board, mapped as on the board: the arrow keys move, X shoots, Z is the power-up, C or V the missile (Lifeforce Japan), A inserts a coin when released and S is the start button; 5, 1 and 2 work as in MAME (coin, 1 player start, 2 player start). A + S resets the game. Space pauses, N steps one frame while paused, Tab (held) runs fast, F12 saves the frame on screen and Esc quits.
 
 ## Profiling the main CPU
 

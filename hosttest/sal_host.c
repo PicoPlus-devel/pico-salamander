@@ -48,7 +48,7 @@
  *   --scale N      window size, N times the picture (default 3)
  *   --mute         no sound output; paced on a timer
  * The keys are those of a USB keyboard on the board, mapped as on the board
- * (sal_input.c): arrows joystick, Z shoot, X power-up, C or V missile, A coin
+ * (sal_input.c): arrows joystick, X shoot, Z power-up, C or V missile, A coin
  * (when released), S start; also MAME's 5 coin, 1 start, 2 two player start.
  * A+S resets the game (the board opens its settings menu). Space pauses, N
  * steps a frame while paused, Tab (held) fast-forwards, F12 dumps the frame

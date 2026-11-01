@@ -195,7 +195,7 @@ static uint32_t keyboard_pad(void)
         SDL_Scancode key;
         uint32_t bit;
     } map[] = {
-        {SDL_SCANCODE_Z, HSDL_A},         {SDL_SCANCODE_X, HSDL_B},       {SDL_SCANCODE_C, HSDL_X},
+        {SDL_SCANCODE_X, HSDL_A},         {SDL_SCANCODE_Z, HSDL_B},       {SDL_SCANCODE_C, HSDL_X},
         {SDL_SCANCODE_V, HSDL_Y},         {SDL_SCANCODE_A, HSDL_SELECT},  {SDL_SCANCODE_S, HSDL_START},
         {SDL_SCANCODE_UP, HSDL_UP},       {SDL_SCANCODE_DOWN, HSDL_DOWN}, {SDL_SCANCODE_LEFT, HSDL_LEFT},
         {SDL_SCANCODE_RIGHT, HSDL_RIGHT}, {SDL_SCANCODE_5, HSDL_COIN},    {SDL_SCANCODE_1, HSDL_START},
