@@ -1,0 +1,56 @@
+# Build trees (bld.sh recreates build/ on every run)
+**/build*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# Release outputs (buildAll.sh, bld.sh -b)
+releases/
+releases_bl/
+*.uf2
+*.elf
+*.elf.map
+*.dis
+*.bin
+*.hex
+
+# Salamander and Lifeforce ROM data. Copyright Konami - it must never be
+# committed, in any form.
+/roms/
+*.zip
+587-*.*
+*_27512.*
+*_27128.*
+*_tmm24256ap.*
+610[678].1[07][abc]
+
+# CPU test programs for hosttest/zex_host (fetched separately)
+*.com
+
+# Host harness (hosttest/) binaries and outputs
+hosttest/sal_host
+hosttest/zex_host
+hosttest/ym_test
+hosttest/sal_host_ref
+hosttest/ym_compare
+hosttest/obj/
+hosttest/out*/
+hosttest/**/*.ppm
+hosttest/**/*.png
+hosttest/**/*.wav
+hosttest/**/*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Recordings of the board dropped into the tree for analysis
+*.mp4
+
+# Editors and OS cruft
+.vscode/
+.idea/
+*~
+*.swp
+.DS_Store
+*Zone.Identifier

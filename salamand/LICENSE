@@ -1,0 +1,66 @@
+The emulated board in this directory is built from these sources:
+
+  sal.c, sal_video.c, sal_sound.c, sal_sets.c, sal_bus.h, sal.h,
+  sal_internal.h, sal_input.c, sal_input.h, sal_port.h
+      After MAME's src/mame/konami/nemesis.cpp and nemesis_v.cpp
+      (license BSD-3-Clause, copyright-holders Bryan McPhail): the memory
+      maps, the latches, the video and the ROM sets. Written for this
+      project; GNU General Public License v3.0 (see ../LICENSE).
+
+  romload.c
+      The ROM set loader of pico-1943 (from pico-galagino and
+      pico-mooncresta); GNU General Public License v3.0.
+
+  musashi/
+      Musashi 4.60, the Motorola 68000 emulator by Karl Stenerud
+      (https://github.com/kstenerud/Musashi), MIT licence (see the header of
+      m68kcpu.c). m68kops.c is the output of its generator, m68kmake, with
+      the run-time jump table replaced by the tables of
+      tools/m68k_dispatch.py; m68kcpu.c and m68kcpu.h are patched to use
+      them (and to leave out the bus error state, the FPU and the MMU).
+      m68kconf.h is this project's configuration. softfloat/ holds the
+      headers m68kcpu.h needs (SoftFloat, John R. Hauser; see its README).
+
+  z80.c, z80.h, z80.lst, z80_ops.h
+      MAME's Z80 core (src/devices/cpu/z80, license BSD-3-Clause,
+      copyright-holders Juergen Buchmueller, Andrei I. Holub) in plain C, as
+      pico-1943 carries it (from pico-galagino and pico-mooncresta); z80_ops.h
+      is generated from z80.lst by tools/z80gen.py.
+
+  ym2151.c, ym2151.h
+      MAME's src/devices/sound/ym2151.cpp as of MAME 0.229 (license
+      GPL-2.0-or-later, copyright-holders Jarek Burczynski, Ernesto Corvi) in
+      plain C, the samples made at the output rate.
+
+  k007232.c, k007232.h
+      MAME's src/devices/sound/k007232.cpp (license BSD-3-Clause,
+      copyright-holders Nicola Salmoria, Hiromitsu Shioya) in plain C.
+
+  vlm5030.c, vlm5030.h
+      MAME's src/devices/sound/vlm5030.cpp (license BSD-3-Clause,
+      copyright-holder Tatsuyuki Satoh) in plain C, with the chip's
+      coefficients from tms5110r.hxx.
+
+The BSD-3-Clause licence of the MAME sources:
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright notice,
+     this list of conditions and the following disclaimer in the documentation
+     and/or other materials provided with the distribution.
+  3. Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  POSSIBILITY OF SUCH DAMAGE.

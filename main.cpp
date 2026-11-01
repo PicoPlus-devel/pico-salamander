@@ -1,0 +1,1396 @@
+/*
+ * picoSalamander - Salamander and Lifeforce (Konami, 1986) for RP2350 boards
+ * with PSRAM and HSTX video output.
+ *
+ * Boots the pico_shared framework, finds the ROM sets on the SD card, and runs
+ * the board (salamand/) one frame per display frame. The core is plain C
+ * shared with the host harness in hosttest/; this file wires it to the
+ * display, audio and controller drivers and to the settings menu.
+ *
+ * Like the other arcade games of this family there is no ROM browser:
+ *   - menu() is never called; only the settings menu (SELECT + START) is used.
+ *   - each set is read from its own folder: /roms/arcade/SALAMAND (MAME's
+ *     salamand.zip, merged, or a split clone zip; version D, J and the Tecfri
+ *     licence all play) and /roms/arcade/LIFEFRCE (lifefrce.zip; the US and
+ *     Japanese versions), as zips or unzipped. With both on the card a small
+ *     menu chooses; its Quit game returns there.
+ *   - the machine's data (688 KB) does not fit in SRAM: it is built in PSRAM
+ *     at every start. A board without PSRAM shows a screen saying so.
+ *
+ * The board runs at 384 MHz, as pico-outrun does: the 68000, the drawing and
+ * the controllers on core0, the sound board on core1 between the display's
+ * interrupts.
+ *
+ * Built from pico-1943's main.cpp.
+ */
+
+#include <cstdio>
+#include <cstring>
+
+#include "pico/stdlib.h"
+#include "hardware/vreg.h"
+#include "hardware/watchdog.h"
+
+#include "ff.h"
+#include "tusb.h"
+
+#include "FrensHelpers.h"
+#include "FrensFonts.h"
+#include "gamepad.h"
+#include "menu.h"
+#include "menu_settings.h"
+#include "nespad.h"
+#include "settings.h"
+#include "vumeter.h"
+#include "wiipad.h"
+
+#include "sal.h"
+#include "sal_input.h"
+
+#if !HSTX
+#error "picoSalamander needs a board with HSTX video output"
+#endif
+
+// 384 MHz at 1.50 V on every board: 8 x 48 MHz, so USB runs from PLL_SYS and
+// PLL_USB is the 126 MHz HSTX clock (pico_shared's setClocksAndStartStdio).
+// Fixed: the Overclock entry of the settings menu is not offered.
+#define SAL_CLOCKFREQ_KHZ 384000
+#define SAL_VOLTAGE VREG_VOLTAGE_1_50
+
+// Must be a power of two (util::RingBuffer asserts it). It holds the audio
+// cushion (see pushAudio()) plus a whole frame of 735 samples. The I2S ring of
+// pico_shared is given the same size in CMakeLists.txt.
+#define AUDIOBUFFERSIZE 2048
+
+#define SAMPLERATE 44100
+#define SAMPLES_PER_FRAME (SAMPLERATE / 60) // 735
+
+#define ROMROOT "/roms/arcade"
+#define LASTSET_FILE ROMROOT "/SALAMAND/LASTSET.TXT"
+
+// 1: print the time spent per part of a frame over the serial console every
+// 5 seconds. For measuring a board.
+#ifndef SAL_FRAME_STATS
+#define SAL_FRAME_STATS 0
+#endif
+
+// The set menu starts the set selected after this long without input.
+#define CHOOSER_TIMEOUT_FRAMES (10 * 60)
+
+// Output gains in Q8 (256 = unity). The board's mix peaks at about half of
+// full scale; the I2S DAC drives the amplifier or headphones directly and gets
+// a quarter, as in pico-galagino.
+#ifndef DVI_AUDIO_GAIN_Q8
+#define DVI_AUDIO_GAIN_Q8 256
+#endif
+#ifndef EXT_AUDIO_GAIN_Q8
+#define EXT_AUDIO_GAIN_Q8 64
+#endif
+
+// SRAM the core keeps for good: the pages of the program ROM it runs most
+// from (see sal_start). A fixed arena, so that its cost shows at link time,
+// and the heap the drivers need is never taken.
+#ifndef SAL_ARENA_SIZE
+#define SAL_ARENA_SIZE (16 * 1024)
+#endif
+
+// The picture, 256x224, in the middle of the 320x240 canvas, drawn in bands
+// of DRAW_BAND rows (see presentFrame()).
+#define PIC_X ((SCREENWIDTH - SAL_W) / 2)
+#define PIC_Y ((SCREENHEIGHT - SAL_H) / 2)
+#define DRAW_BAND 16
+
+static int16_t audioBuf[2 * SAMPLES_PER_FRAME]; // stereo, interleaved
+static bool audioPending = false;              // a frame's sound is made (or being made), not pushed yet
+
+// The sound board on core1: core1 only feeds the display from DMA interrupts
+// and runs a background task in between (pico_shared's
+// video_output_set_background_task), so the sound board runs there, a frame
+// at a time: core0 runs the main CPU's frame and posts its latch writes and
+// interrupts, core1 makes the frame's sound, and core0 pushes it two frames
+// later: the sound board takes up to 7 ms of a frame, and core0 must never
+// wait for it at the start of a frame, when the display is to be fed.
+extern "C" void video_output_set_background_task(void (*task)(void));
+
+// What the board is showing.
+enum class State
+{
+    NoPsram, // the board has no PSRAM: the game cannot run
+    NoSets,  // no SD card, or no complete ROM set: what is missing
+    Chooser, // both sets are there: which one
+    Game,    // a set is running
+    Failed,  // a set could not be started: the reason, until a button
+};
+static State state = State::NoSets;
+
+static bool sdOk = false;
+static int available[SAL_SET_COUNT]; // per set: the variant that can be played, or -1
+static int navailable = 0;
+static sal_files_t probed[SAL_SET_COUNT];
+static int running = -1;
+static bool showSettings = false;
+static uint32_t fps = 0;
+static uint64_t lastFrameUs = 0;
+static sal_pads_t pads;
+
+// ---------------------------------------------------------------------------
+// Settings menu wiring.
+//
+// Positional, indexed by MenuSettingsIndex - append only, never reorder.
+// 1 = shown, 0 = hidden, -1 = never shown. 0 and -1 differ only for Exit, Save/
+// Restore state and Reset, which the in-game menu shows unless they are -1.
+// C++ designated initializers may not skip members, so every entry up to the
+// last one used is listed.
+//
+// Two tables: with both sets on the card "Quit game" returns to the set menu;
+// with one there is nothing to quit to.
+// ---------------------------------------------------------------------------
+#define SAL_VISIBILITY(canQuit)                                                         \
+    {                                                                                   \
+        [MOPT_EXIT_GAME] = (canQuit) ? 1 : -1, /* back to the set menu */               \
+        [MOPT_RESET_GAME] = 1,                                                          \
+        [MOPT_REBOOT_TO_LOADER] = BOOTLOADER_BUILD, /* the bootloader's picker */       \
+        [MOPT_SAVE_RESTORE_STATE] = -1,             /* no save states */                \
+        [MOPT_SCREENMODE] = 1,                                                          \
+        [MOPT_SCANLINES] = 0, /* covered by the screen modes */                         \
+        [MOPT_SCANLINE_TYPE] = 1,                                                       \
+        [MOPT_FPS_OVERLAY] = 1,                                                         \
+        [MOPT_AUDIO_ENABLE] = 1,                                                        \
+        [MOPT_FRAMESKIP] = 0,                                                           \
+        [MOPT_DISPLAY_MODE] = ENABLEDVI,                                                \
+        [MOPT_EXTERNAL_AUDIO] = EXT_AUDIO_IS_ENABLED,                                   \
+        [MOPT_FONT_COLOR] = 0,                                                          \
+        [MOPT_FONT_BACK_COLOR] = 0,                                                     \
+        [MOPT_FRUITJAM_VUMETER] = ENABLE_VU_METER,                                      \
+        [MOPT_FRUITJAM_VOLUME_CONTROL] = (HW_CONFIG == 8),                              \
+        [MOPT_DMG_PALETTE] = 0,            /* Game Boy */                               \
+        [MOPT_BORDER_MODE] = 0,            /* Game Boy */                               \
+        [MOPT_RAPID_FIRE_ON_A] = 1,        /* A: shoot */                               \
+        [MOPT_RAPID_FIRE_ON_B] = 0,        /* B is the power-up */                      \
+        [MOPT_AUTO_INSERT_FDS_DISK_A] = 0, /* Famicom Disk System */                    \
+        [MOPT_AUTO_SWAP_FDS_DISK] = 0,     /* Famicom Disk System */                    \
+        [MOPT_FDS_DISK_SWAP] = 0,          /* Famicom Disk System */                    \
+        [MOPT_OVERCLOCK] = 0,              /* the clock is fixed (see above) */         \
+        [MOPT_FM_AUDIO] = 0,               /* Master System YM2413 */                   \
+        [MOPT_ENTER_BOOTSEL_MODE] = 1,                                                  \
+        [MOPT_CONTROLLER_TEST] = 1,                                                     \
+        [MOPT_RECENT_GAMES] = 0,  /* ROM browser only */                                \
+        [MOPT_USB_DRIVE_MODE] = 0, /* shown regardless: FRENS_FORCE_USB_MSC_IN_SETTINGS */ \
+        [MOPT_CASSETTE] = 0,      /* TI-99/4A */                                        \
+        [MOPT_DISK] = 0,          /* TI-99/4A */                                        \
+        [MOPT_SERIAL_KEYBOARD] = 0, /* TI-99/4A */                                      \
+        [MOPT_SPRITE_LIMIT] = 0,  /* NES */                                             \
+        [MOPT_MENU_OVERSCAN] = 0, /* shown regardless: listed below the menu colors */  \
+        [MOPT_GENESIS_PAD] = 0,   /* Genesis */                                         \
+        [MOPT_NES_PALETTE] = 0,   /* NES */                                             \
+        [MOPT_BUTTON_LAYOUT] = 0, /* NES */                                             \
+        [MOPT_TATE_MODE] = 0,     /* the game is horizontal */                          \
+    }
+
+int8_t g_settings_visibility_sal_quit[MOPT_COUNT] = SAL_VISIBILITY(1);
+int8_t g_settings_visibility_sal[MOPT_COUNT] = SAL_VISIBILITY(0);
+
+// The 8:7 modes stretch NES pixels; Salamander's are square-ish, so only the
+// 1:1 modes are offered.
+const uint8_t g_available_screen_modes_sal[] = {
+    0, // SCANLINE_8_7
+    0, // NOSCANLINE_8_7
+    1, // SCANLINE_1_1
+    1, // NOSCANLINE_1_1
+};
+
+// ---------------------------------------------------------------------------
+// Framebuffer access: a contiguous 16-bit RGB555 buffer of 320x240 pixels.
+// ---------------------------------------------------------------------------
+static inline uint16_t *fbLine(int line)
+{
+    return hstx_getlineFromFramebuffer(line);
+}
+
+static inline uint16_t rgb(uint8_t r, uint8_t g, uint8_t b)
+{
+    return (uint16_t)(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
+}
+
+// ---------------------------------------------------------------------------
+// Text on the framebuffer, for the set menu, the error screens and the FPS
+// overlay. pico_shared's putText() only works inside its own menus, but the
+// 8x8 font is exported.
+// ---------------------------------------------------------------------------
+static void screenClear(uint16_t bg)
+{
+    for (int y = 0; y < SCREENHEIGHT; y++)
+    {
+        uint16_t *dst = fbLine(y);
+        for (int x = 0; x < SCREENWIDTH; x++)
+            dst[x] = bg;
+    }
+}
+
+// col/row in 8x8 cells of the canvas (40x30); col < 0 centres the text.
+static void screenText(int col, int row, const char *s, uint16_t fg, uint16_t bg)
+{
+    const int cols = SCREENWIDTH / FONT_CHAR_WIDTH;
+    const int len = (int)strlen(s);
+    if (col < 0)
+        col = (len < cols) ? (cols - len) / 2 : 0;
+    for (int i = 0; i < len && col + i < cols; i++)
+    {
+        char c = s[i];
+        if (c < FONT_FIRST_ASCII || c >= FONT_FIRST_ASCII + FONT_N_CHARS)
+            c = ' ';
+        for (int line = 0; line < FONT_CHAR_HEIGHT; line++)
+        {
+            uint16_t *dst = fbLine(row * FONT_CHAR_HEIGHT + line) + (col + i) * FONT_CHAR_WIDTH;
+            // leftmost pixel in the low bit
+            char slice = getcharslicefrom8x8font(c, line);
+            for (int bit = 0; bit < FONT_CHAR_WIDTH; bit++, slice >>= 1)
+                *dst++ = (slice & 1) ? fg : bg;
+        }
+    }
+}
+
+#define SCR_BG rgb(0, 0, 0)
+#define SCR_FG rgb(200, 200, 200)
+#define SCR_HI rgb(255, 64, 64)
+#define SCR_FILE rgb(255, 255, 255)
+
+static void setDir(int set, char *buf, size_t n)
+{
+    snprintf(buf, n, ROMROOT "/%s", sal_sets[set].folder);
+}
+
+// The board has no PSRAM: nothing can run.
+static void drawNoPsramScreen()
+{
+    screenClear(SCR_BG);
+    screenText(-1, 1, "picoSalamander", SCR_HI, SCR_BG);
+    screenText(1, 4, "This board has no PSRAM.", SCR_HI, SCR_BG);
+    screenText(1, 6, "Salamander needs a board with PSRAM,", SCR_FG, SCR_BG);
+    screenText(1, 7, "such as the Adafruit Fruit Jam or a", SCR_FG, SCR_BG);
+    screenText(1, 8, "Pimoroni Pico Plus 2.", SCR_FG, SCR_BG);
+    screenText(1, 26, "SELECT+START opens settings.", SCR_HI, SCR_BG);
+}
+
+// No SD card, or no complete ROM set: the folders, and what is missing.
+static void drawNoSetsScreen()
+{
+    char buf[48];
+    int row = 1;
+
+    screenClear(SCR_BG);
+    screenText(-1, row++, "picoSalamander", SCR_HI, SCR_BG);
+    row++;
+    if (!sdOk)
+    {
+        screenText(1, row++, "No SD card found.", SCR_HI, SCR_BG);
+    }
+    else
+    {
+        screenText(1, row++, "No complete ROM set found.", SCR_HI, SCR_BG);
+        row++;
+        screenText(1, row++, "Copy MAME's salamand.zip to", SCR_FG, SCR_BG);
+        screenText(3, row++, ROMROOT "/SALAMAND", SCR_FILE, SCR_BG);
+        screenText(1, row++, "or lifefrce.zip to", SCR_FG, SCR_BG);
+        screenText(3, row++, ROMROOT "/LIFEFRCE", SCR_FILE, SCR_BG);
+        screenText(1, row++, "as a zip or unzipped.", SCR_FG, SCR_BG);
+        for (int s = 0; s < SAL_SET_COUNT && row < 24; s++)
+        {
+            if (!probed[s])
+                continue;
+            // a set partly there: what it lacks
+            const sal_set_info_t *si = &sal_sets[s];
+            const int v = sal_variant_nearest((sal_set_id_t)s, probed[s]);
+            const sal_files_t missing = sal_variant_files((sal_set_id_t)s, v) & ~probed[s];
+            row++;
+            snprintf(buf, sizeof(buf), "%s lacks:", si->folder);
+            screenText(1, row++, buf, SCR_FG, SCR_BG);
+            int shown = 0, n = 0;
+            for (int i = 0; i < si->nfiles; i++)
+            {
+                if (!(missing & ((sal_files_t)1 << i)))
+                    continue;
+                n++;
+                if (shown < 6 && row < 25)
+                {
+                    snprintf(buf, sizeof(buf), "  %s", si->files[i].name);
+                    screenText(1, row++, buf, SCR_FILE, SCR_BG);
+                    shown++;
+                }
+            }
+            if (n > shown && row < 25)
+            {
+                snprintf(buf, sizeof(buf), "  ...and %d more", n - shown);
+                screenText(1, row++, buf, SCR_FG, SCR_BG);
+            }
+        }
+    }
+    screenText(1, 26, "SELECT+START opens settings, which", SCR_HI, SCR_BG);
+    screenText(1, 27, "can enter USB drive mode.", SCR_HI, SCR_BG);
+}
+
+// A set whose files looked complete could not be started.
+static void drawFailedScreen(int set, const char *why)
+{
+    char buf[48];
+    screenClear(SCR_BG);
+    snprintf(buf, sizeof(buf), "%s", sal_sets[set].folder);
+    screenText(1, 2, buf, SCR_HI, SCR_BG);
+    screenText(1, 4, "could not be started:", SCR_FG, SCR_BG);
+    screenText(1, 6, why, SCR_FILE, SCR_BG);
+    screenText(1, 27, "Press START to continue.", SCR_HI, SCR_BG);
+}
+
+// ---------------------------------------------------------------------------
+// The set menu, when both sets are on the card.
+// ---------------------------------------------------------------------------
+static int chooserSel = 0;
+static int chooserIdle = 0;
+static bool chooserDrawn = false;
+static uint32_t chooserPrev = ~0u; // last frame's buttons: held ones do not count
+
+static int readLastSet()
+{
+    FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
+    int set = 0;
+    char c = '0';
+    UINT br = 0;
+    if (fil && f_open(fil, LASTSET_FILE, FA_READ) == FR_OK)
+    {
+        if (f_read(fil, &c, 1, &br) == FR_OK && br == 1 && c >= '0' && c < '0' + SAL_SET_COUNT)
+            set = c - '0';
+        f_close(fil);
+    }
+    Frens::f_free(fil);
+    return set;
+}
+
+static void writeLastSet(int set)
+{
+    if (!sdOk || readLastSet() == set)
+        return;
+    FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
+    const char c = (char)('0' + set);
+    UINT bw = 0;
+    if (fil && f_open(fil, LASTSET_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
+    {
+        f_write(fil, &c, 1, &bw);
+        f_close(fil);
+    }
+    Frens::f_free(fil);
+}
+
+static void drawChooser()
+{
+    char buf[48];
+    if (!chooserDrawn)
+    {
+        screenClear(SCR_BG);
+        screenText(-1, 6, "picoSalamander", SCR_HI, SCR_BG);
+        screenText(-1, 20, "UP/DOWN chooses, A or START plays", SCR_FG, SCR_BG);
+        chooserDrawn = true;
+    }
+    int row = 10;
+    for (int s = 0; s < SAL_SET_COUNT; s++)
+    {
+        if (available[s] < 0)
+            continue;
+        const bool sel = (s == chooserSel);
+        snprintf(buf, sizeof(buf), "%c %s (%s)", sel ? '>' : ' ', sal_sets[s].title,
+                 sal_sets[s].variant_name[available[s]]);
+        screenText(4, row, buf, sel ? SCR_FILE : SCR_FG, SCR_BG);
+        row += 2;
+    }
+    const int left = (CHOOSER_TIMEOUT_FRAMES - chooserIdle + 59) / 60;
+    snprintf(buf, sizeof(buf), "Starts in %2d s", left);
+    screenText(-1, 24, buf, SCR_FG, SCR_BG);
+}
+
+// ---------------------------------------------------------------------------
+// ROM loading through FatFs
+// ---------------------------------------------------------------------------
+static int ffListDir(void *ctx, const char *dir, sal_dir_cb cb, void *arg)
+{
+    (void)ctx;
+    DIR *d = (DIR *)Frens::f_malloc(sizeof(DIR));
+    FILINFO *fno = (FILINFO *)Frens::f_malloc(sizeof(FILINFO));
+    int ok = 0;
+    if (d && fno && f_opendir(d, dir) == FR_OK)
+    {
+        ok = 1;
+        while (f_readdir(d, fno) == FR_OK && fno->fname[0])
+            cb(arg, fno->fname, (uint32_t)fno->fsize, (fno->fattrib & AM_DIR) ? 1 : 0);
+        f_closedir(d);
+    }
+    Frens::f_free(fno);
+    Frens::f_free(d);
+    return ok;
+}
+
+static void *ffOpen(void *ctx, const char *path)
+{
+    (void)ctx;
+    FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
+    if (fil && f_open(fil, path, FA_READ) == FR_OK)
+        return fil;
+    Frens::f_free(fil);
+    return nullptr;
+}
+
+static uint32_t ffSize(void *ctx, void *file)
+{
+    (void)ctx;
+    return (uint32_t)f_size((FIL *)file);
+}
+
+static int ffReadAt(void *ctx, void *file, uint32_t ofs, void *buf, uint32_t len)
+{
+    (void)ctx;
+    UINT br = 0;
+    if (f_lseek((FIL *)file, ofs) != FR_OK || f_read((FIL *)file, buf, len, &br) != FR_OK)
+        return -1;
+    return (int)br;
+}
+
+static void ffClose(void *ctx, void *file)
+{
+    (void)ctx;
+    f_close((FIL *)file);
+    Frens::f_free(file);
+}
+
+// The loader's scratch buffers go where f_malloc puts them: PSRAM.
+static void *ffAlloc(void *ctx, uint32_t size)
+{
+    (void)ctx;
+    return Frens::f_malloc(size);
+}
+
+static void ffFree(void *ctx, void *p)
+{
+    (void)ctx;
+    Frens::f_free(p);
+}
+
+static const sal_io_t romIo = {nullptr, ffListDir, ffOpen, ffSize, ffReadAt, ffClose, ffAlloc, ffFree};
+
+// ---------------------------------------------------------------------------
+// Memory: the arena (SRAM) and PSRAM
+// ---------------------------------------------------------------------------
+static uint8_t __attribute__((aligned(4))) arena[SAL_ARENA_SIZE];
+static uint32_t arenaUsed = 0;
+
+// What the core keeps in SRAM: from the arena, while it lasts.
+static void *fastAlloc(uint32_t size)
+{
+    size = (size + 3) & ~3u;
+    if (arenaUsed + size > sizeof(arena))
+        return nullptr;
+    void *p = arena + arenaUsed;
+    arenaUsed += size;
+    return p;
+}
+
+static void *psramAlloc(uint32_t size)
+{
+    return Frens::f_malloc(size);
+}
+
+static void psramFree(void *p)
+{
+    Frens::f_free(p);
+}
+
+// ---------------------------------------------------------------------------
+// The sets on the card
+// ---------------------------------------------------------------------------
+static void probeSets()
+{
+    char dir[48];
+    navailable = 0;
+    for (int s = 0; s < SAL_SET_COUNT; s++)
+    {
+        available[s] = -1;
+        probed[s] = 0;
+        if (sdOk)
+        {
+            setDir(s, dir, sizeof(dir));
+            probed[s] = sal_probe((sal_set_id_t)s, &romIo, dir);
+            available[s] = sal_variant_found((sal_set_id_t)s, probed[s]);
+        }
+        if (available[s] >= 0)
+        {
+            navailable++;
+            printf("%-12s %s (%s)\n", sal_sets[s].title, sal_sets[s].variant_set[available[s]],
+                   sal_sets[s].variant_name[available[s]]);
+        }
+        else
+        {
+            printf("%-12s not found (%d files of it)\n", sal_sets[s].title, __builtin_popcountll(probed[s]));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Starting a set
+// ---------------------------------------------------------------------------
+static void enterChooser();
+static void waitSound();
+
+// The data of the set started last, built in PSRAM: freed before another set
+// is loaded (the machine is not running then).
+static uint8_t *psramParts[SAL_P_COUNT];
+
+static void freePsramParts()
+{
+    for (int p = 0; p < SAL_P_COUNT; p++)
+    {
+        if (psramParts[p])
+            psramFree(psramParts[p]);
+        psramParts[p] = nullptr;
+    }
+}
+
+static void startSet(int set)
+{
+    const int v = available[set];
+    char dir[48];
+    setDir(set, dir, sizeof(dir));
+    uint8_t *parts[SAL_P_COUNT];
+    const uint64_t t0 = Frens::time_us();
+    waitSound(); // the sound board is not running on core1 while it is set up
+    freePsramParts();
+    const sal_files_t got = sal_load((sal_set_id_t)set, v, &romIo, dir, psramAlloc, psramFree, parts);
+    if (got != sal_variant_files((sal_set_id_t)set, v))
+    {
+        for (int p = 0; p < SAL_P_COUNT; p++)
+            if (parts[p])
+                psramFree(parts[p]);
+        drawFailedScreen(set, "Its files could not be read.");
+        state = State::Failed;
+        return;
+    }
+    for (int p = 0; p < SAL_P_COUNT; p++)
+        psramParts[p] = parts[p];
+    arenaUsed = 0;
+    sal_start((sal_set_id_t)set, v, parts, fastAlloc);
+    sal_sound_reset();
+    sal_render_begin();
+    running = set;
+    writeLastSet(set);
+    printf("Started %s (%s) in %lu ms; %lu bytes kept in SRAM\n", sal_sets[set].title, sal_sets[set].variant_set[v],
+           (unsigned long)((Frens::time_us() - t0) / 1000), (unsigned long)sal_fast_bytes());
+    sal_pads_reset(&pads);
+    state = State::Game;
+}
+
+static void enterChooser()
+{
+    running = -1;
+    chooserIdle = 0;
+    chooserDrawn = false;
+    chooserPrev = ~0u;
+    chooserSel = readLastSet();
+    if (available[chooserSel] < 0)
+        for (int s = 0; s < SAL_SET_COUNT; s++)
+            if (available[s] >= 0)
+                chooserSel = s;
+    sal_pads_reset(&pads);
+    state = State::Chooser;
+}
+
+// Where the board goes after booting, or when a game is quit.
+static void enterSets()
+{
+    if (navailable == 0)
+    {
+        state = State::NoSets;
+        drawNoSetsScreen();
+    }
+    else if (navailable == 1)
+    {
+        for (int s = 0; s < SAL_SET_COUNT; s++)
+            if (available[s] >= 0)
+                startSet(s);
+    }
+    else
+    {
+        enterChooser();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Audio: one frame of stereo samples to whichever sink is active.
+//
+// See pico-galagino's main.cpp (from pico-mooncresta): the I2S ring keeps a
+// cushion of AUDIO_CUSHION samples in front of each frame's burst, refilled
+// with silence when the sink has drained, and a frame pushes one sample less
+// or more when the level drifts; the HSTX data-island queue is clocked with
+// the frames and only gets a small cushion when it has run dry. A frame's
+// sound is pushed at the start of the next frame, right after the pace. Runs
+// from SRAM.
+// ---------------------------------------------------------------------------
+#define AUDIO_CUSHION 512   // ~12 ms
+#define AUDIO_TRIM_BAND 192 // drift tolerated before a frame is trimmed
+#define HSTX_CUSHION 32     // ~0.7 ms, 8 packets
+
+static inline int16_t applyGain(int x, int gainQ8)
+{
+    int32_t v = (x * gainQ8) >> 8;
+    if (v > 32767)
+        v = 32767;
+    else if (v < -32768)
+        v = -32768;
+    return (int16_t)v;
+}
+
+static inline int ringQueued()
+{
+#if EXT_AUDIO_IS_ENABLED
+    return I2S_AUDIO_RING_SIZE - 1 - EXT_AUDIO_GET_FREE();
+#else
+    return 0;
+#endif
+}
+
+static inline void ringPut(int16_t l, int16_t r)
+{
+#if EXT_AUDIO_IS_ENABLED
+    EXT_AUDIO_ENQUEUE_SAMPLE(l, r);
+#else
+    (void)l;
+    (void)r;
+#endif
+}
+
+#if SAL_FRAME_STATS
+static uint64_t audioSq; // the pushed samples' energy, for the loudness in the stats
+static uint32_t audioN;
+#endif
+
+static void __noinline __not_in_flash_func(pushAudio)(const int16_t *buf, int n)
+{
+    const bool mute = !settings.flags.audioEnabled;
+#if SAL_FRAME_STATS
+    for (int i = 0; i < 2 * n; i++)
+        audioSq += (uint32_t)(buf[i] * buf[i]);
+    audioN += (uint32_t)(2 * n);
+#endif
+
+#if EXT_AUDIO_IS_ENABLED
+    const bool ext = settings.flags.useExtAudio || Frens::isHeadPhoneJackConnected();
+#else
+    const bool ext = false;
+#endif
+
+    if (!ext)
+    {
+        if (hstx_di_queue_get_level() == 0)
+        {
+            for (int i = 0; i < HSTX_CUSHION; i++)
+                hstx_push_audio_sample(0, 0);
+        }
+        for (int i = 0; i < n; i++)
+        {
+            const int16_t l = mute ? 0 : buf[2 * i], r = mute ? 0 : buf[2 * i + 1];
+#if ENABLE_VU_METER
+            if (settings.flags.enableVUMeter)
+                addSampleToVUMeter((int16_t)((l + r) / 2));
+#endif
+            hstx_push_audio_sample(applyGain(l, DVI_AUDIO_GAIN_Q8), applyGain(r, DVI_AUDIO_GAIN_Q8));
+        }
+        return;
+    }
+
+    // the cushion and the drift trim, see above
+    const int queued = ringQueued();
+    int repeat = 0;
+    if (queued < AUDIO_CUSHION / 4)
+    {
+        for (int i = queued; i < AUDIO_CUSHION; i++)
+            ringPut(0, 0);
+    }
+    else if (queued > AUDIO_CUSHION + AUDIO_TRIM_BAND)
+    {
+        n--;
+    }
+    else if (queued < AUDIO_CUSHION - AUDIO_TRIM_BAND)
+    {
+        repeat = 1;
+    }
+
+    int16_t l = 0, r = 0;
+    for (int i = 0; i < n; i++)
+    {
+        l = mute ? 0 : buf[2 * i];
+        r = mute ? 0 : buf[2 * i + 1];
+#if ENABLE_VU_METER
+        if (settings.flags.enableVUMeter)
+            addSampleToVUMeter((int16_t)((l + r) / 2));
+#endif
+        ringPut(applyGain(l, EXT_AUDIO_GAIN_Q8), applyGain(r, EXT_AUDIO_GAIN_Q8));
+    }
+    if (repeat)
+        ringPut(applyGain(l, EXT_AUDIO_GAIN_Q8), applyGain(r, EXT_AUDIO_GAIN_Q8));
+}
+
+// ---------------------------------------------------------------------------
+// The sound board on core1, see "The sound board on core1" above.
+//
+// Frames are handed over through SOUND_SLOTS slots, frame i in slot i mod
+// SOUND_SLOTS, with three counters: core0 copies a frame's events into its
+// slot and raises `posted`; core1 makes the sound of each frame posted and
+// raises `done`; core0 pushes the sound of the frames done and raises
+// `pushed`. core0 posts frame k at the end of its own work on it (about 10 ms
+// into the frame) and pushes frame k-1 at the start of frame k+2: core1 has
+// nearly two frames for each frame, while it also serves the display's
+// interrupts, so core0 never has to wait for it. A slot is only written by
+// core1 between its post and its sound being done, and by core0 otherwise.
+// ---------------------------------------------------------------------------
+#define SOUND_SLOTS 3
+static bool soundOnCore1 = false;
+static sal_event_t core1Events[SOUND_SLOTS][SAL_MAX_EVENTS];
+static int core1Nevents[SOUND_SLOTS];
+static int16_t core1Audio[SOUND_SLOTS][2 * SAMPLES_PER_FRAME];
+static volatile uint32_t soundPosted = 0, soundDone = 0;
+static uint32_t soundPushed = 0; // core0's own
+
+#if SAL_FRAME_STATS
+static void statsStartCounter();
+#endif
+
+static void __not_in_flash_func(soundTask)()
+{
+#if SAL_FRAME_STATS
+    static bool counting = false; // the cycle counter is per core
+    if (!counting)
+    {
+        statsStartCounter();
+        counting = true;
+    }
+#endif
+    const uint32_t done = soundDone;
+    if (done == soundPosted)
+        return;
+    __dmb();
+    const int slot = done % SOUND_SLOTS;
+    sal_sound_frame(core1Events[slot], core1Nevents[slot], core1Audio[slot], SAMPLES_PER_FRAME);
+    __dmb();
+    soundDone = done + 1;
+}
+
+// Waits until core1 has made the sound of frames up to `frames`. A core1 that
+// does not answer (it should within a frame) makes the sound go back to core0.
+static void __not_in_flash_func(waitSoundDone)(uint32_t frames)
+{
+    const uint64_t t0 = Frens::time_us();
+    while ((int32_t)(soundDone - frames) < 0)
+    {
+        if (Frens::time_us() - t0 > 100000)
+        {
+            printf("Sound on core1 does not answer: on core0 from now on\n");
+            video_output_set_background_task(nullptr);
+            soundOnCore1 = false;
+            soundDone = soundPosted;
+            break;
+        }
+        tight_loop_contents();
+    }
+    __dmb();
+}
+
+// core1 idle, nothing pending: before the sound board is reset or set up,
+// and around the settings menu. The sound not pushed yet is dropped.
+static void waitSound()
+{
+    if (!soundOnCore1)
+        return;
+    waitSoundDone(soundPosted);
+    soundPushed = soundPosted;
+}
+
+static void __not_in_flash_func(postSound)(const sal_event_t *events, int n)
+{
+    if (soundPosted - soundPushed >= SOUND_SLOTS)
+    {
+        // the slot is still taken (not pushed yet): drop that frame's sound
+        waitSoundDone(soundPushed + 1);
+        soundPushed++;
+    }
+    const int slot = soundPosted % SOUND_SLOTS;
+    sal_event_t *dst = core1Events[slot];
+    for (int i = 0; i < n; i++)
+        dst[i] = events[i];
+    core1Nevents[slot] = n;
+    __dmb();
+    soundPosted = soundPosted + 1;
+}
+
+// The sound to push at the start of a frame: two frames before the one posted
+// last, or nothing when there is none yet.
+static const int16_t *__not_in_flash_func(core1SoundToPush)()
+{
+    if (soundPosted - soundPushed < SOUND_SLOTS)
+        return nullptr;
+    waitSoundDone(soundPushed + 1);
+    if (!soundOnCore1)
+        return nullptr;
+    const int16_t *audio = core1Audio[soundPushed % SOUND_SLOTS];
+    soundPushed++;
+    return audio;
+}
+
+// The sound of the frame just run: made here, or handed to core1.
+static void __not_in_flash_func(makeSound)()
+{
+    const sal_event_t *events;
+    const int n = sal_take_events(&events);
+    if (soundOnCore1)
+    {
+        postSound(events, n);
+        return;
+    }
+    sal_sound_frame(events, n, audioBuf, SAMPLES_PER_FRAME);
+    audioPending = true;
+}
+
+// At the start of a frame: the sound of an earlier frame to the audio sinks.
+static void __not_in_flash_func(pushFrameSound)()
+{
+    if (soundOnCore1)
+    {
+        const int16_t *audio = core1SoundToPush();
+        if (audio)
+            pushAudio(audio, SAMPLES_PER_FRAME);
+        return;
+    }
+    if (audioPending)
+    {
+        pushAudio(audioBuf, SAMPLES_PER_FRAME);
+        audioPending = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Video: draw the picture from the machine's RAM as it is, plus the FPS
+// digits. Called right after the frame pace returns, i.e. at the start of
+// output VBLANK, before the next frame of the main CPU runs, so the
+// single-buffered framebuffer is rewritten ahead of scan-out, band by band.
+// The sprites and colours were prepared (sal_render_begin) at the end of the
+// frame before, and an earlier frame's sound is pushed after the first band:
+// nothing comes between the pace and the first rows, which the display
+// reaches 1.6 ms after the pace. The borders are painted only when they need
+// it.
+// ---------------------------------------------------------------------------
+static bool bordersValid = false;
+static bool fpsShown = false;
+static bool skipDraw = false; // the last frame ran late: this one is not drawn
+
+#if SAL_FRAME_STATS
+#include "hardware/structs/m33.h"
+#include "hardware/clocks.h"
+
+// sal_internal.h's profiling: cycles per part of a frame, from the DWT cycle
+// counter
+extern "C" uint32_t sal_prof[8];
+extern "C" uint32_t __not_in_flash_func(sal_cycles)(void)
+{
+    return m33_hw->dwt_cyccnt;
+}
+
+static void statsStartCounter()
+{
+    m33_hw->demcr |= M33_DEMCR_TRCENA_BITS;
+    m33_hw->dwt_ctrl |= M33_DWT_CTRL_CYCCNTENA_BITS;
+}
+
+static struct
+{
+    uint32_t frames, emu_sum, emu_max, draw_sum, draw_max;
+    uint32_t idle_sum, idle_min, late, skipped; // paceFrame(): the wait for the display
+} stats = {0, 0, 0, 0, 0, 0, UINT32_MAX, 0, 0};
+
+static void statsAdd(uint32_t emu, uint32_t draw)
+{
+    stats.emu_sum += emu;
+    stats.draw_sum += draw;
+    if (emu > stats.emu_max)
+        stats.emu_max = emu;
+    if (draw > stats.draw_max)
+        stats.draw_max = draw;
+    if (++stats.frames == 300)
+    {
+        printf("frame stats: emulate %lu us (max %lu), draw %lu us (max %lu), %lu fps\n",
+               (unsigned long)(stats.emu_sum / stats.frames), (unsigned long)stats.emu_max,
+               (unsigned long)(stats.draw_sum / stats.frames), (unsigned long)stats.draw_max, (unsigned long)fps);
+        const uint32_t mhz = clock_get_hz(clk_sys) / 1000000;
+        printf("  idle us: avg %lu min %lu, late frames %lu, frames not drawn %lu\n",
+               (unsigned long)(stats.idle_sum / stats.frames), (unsigned long)stats.idle_min,
+               (unsigned long)stats.late, (unsigned long)stats.skipped);
+        printf("  parts us: main %lu, sound board %lu (YM2151 %lu, PCM+speech %lu), draw %lu (chars %lu, sprites %lu)\n",
+               (unsigned long)(sal_prof[0] / mhz / stats.frames), (unsigned long)(sal_prof[1] / mhz / stats.frames),
+               (unsigned long)(sal_prof[2] / mhz / stats.frames), (unsigned long)(sal_prof[3] / mhz / stats.frames),
+               (unsigned long)(sal_prof[4] / mhz / stats.frames), (unsigned long)(sal_prof[5] / mhz / stats.frames),
+               (unsigned long)(sal_prof[6] / mhz / stats.frames));
+        memset(sal_prof, 0, sizeof(uint32_t) * 8);
+        const sal_stats_t *st = sal_stats();
+        printf("  machine: pc %06lx/%04lx, sprites %lu, sound idle cycles %lu, audio rms %lu\n",
+               (unsigned long)st->main_pc, (unsigned long)st->sound_pc, (unsigned long)st->sprites_drawn,
+               (unsigned long)st->sound_idle_cycles, (unsigned long)(audioN ? (uint32_t)__builtin_sqrt((double)audioSq / audioN) : 0));
+        audioSq = 0;
+        audioN = 0;
+        memset(&stats, 0, sizeof(stats));
+        stats.idle_min = UINT32_MAX;
+    }
+}
+#endif
+
+static uint32_t lastDrawUs = 0;
+
+static void paintBorders()
+{
+    const uint16_t black = rgb(0, 0, 0);
+    for (int y = 0; y < SCREENHEIGHT; y++)
+    {
+        uint16_t *dst = fbLine(y);
+        if (y < PIC_Y || y >= PIC_Y + SAL_H)
+        {
+            for (int x = 0; x < SCREENWIDTH; x++)
+                dst[x] = black;
+            continue;
+        }
+        for (int x = 0; x < PIC_X; x++)
+            dst[x] = black;
+        for (int x = PIC_X + SAL_W; x < SCREENWIDTH; x++)
+            dst[x] = black;
+    }
+}
+
+static void __noinline __not_in_flash_func(presentFrame)()
+{
+    if (state != State::Game)
+    {
+        pushFrameSound(); // the silence of the menus
+        return;
+    }
+    const uint64_t t0 = Frens::time_us();
+    const bool showFps = settings.flags.displayFrameRate;
+
+    if (!bordersValid || (fpsShown && !showFps))
+    {
+        paintBorders();
+        bordersValid = true;
+        skipDraw = false;
+    }
+    fpsShown = showFps;
+
+    if (!skipDraw)
+    {
+        // In bands of rows, each complete (characters and sprites) before the
+        // display, which started scanning the picture at the pace, reaches
+        // it: a band is drawn in a third of the time its rows take to show.
+        for (int y = 0; y < SAL_H; y += DRAW_BAND)
+        {
+            sal_render_rows(fbLine(PIC_Y + y) + PIC_X, SCREENWIDTH, y, y + DRAW_BAND);
+            if (y == 0)
+                pushFrameSound();
+        }
+    }
+    else
+    {
+        pushFrameSound();
+#if SAL_FRAME_STATS
+        stats.skipped++;
+#endif
+    }
+
+    if (showFps)
+    {
+        char s[3] = {(char)('0' + (fps / 10) % 10), (char)('0' + fps % 10), 0};
+        screenText(1, 1, s, rgb(255, 255, 255), rgb(0, 0, 0)); // in the left border
+    }
+    lastDrawUs = (uint32_t)(Frens::time_us() - t0);
+}
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
+// One GPIO port's pad in io::GamePadState button bits; see pico-outrun's
+// nespadGameBits() for why the pad type is read as "SNES or not".
+static uint32_t nespadGameBits(uint16_t n, uint8_t type)
+{
+    typedef io::GamePadState::Button B;
+    uint32_t b = 0;
+    if (n & (1u << 2)) b |= B::SELECT;
+    if (n & (1u << 3)) b |= B::START;
+    if (n & (1u << 4)) b |= B::UP;
+    if (n & (1u << 5)) b |= B::DOWN;
+    if (n & (1u << 6)) b |= B::LEFT;
+    if (n & (1u << 7)) b |= B::RIGHT;
+    if (type != NESPAD_TYPE_SNES)
+    {
+        if (n & (1u << 0)) b |= B::A;
+        if (n & (1u << 1)) b |= B::B;
+    }
+    else
+    {
+        if (n & (1u << 0)) b |= B::B;
+        if (n & (1u << 1)) b |= B::Y;
+        if (n & (1u << 8)) b |= B::A;
+        if (n & (1u << 9)) b |= B::X;
+    }
+    return b;
+}
+
+// io::GamePadState buttons to sal_input.h's pad bits.
+static uint32_t padBits(uint32_t b)
+{
+    typedef io::GamePadState::Button B;
+    uint32_t p = 0;
+    if (b & B::A) p |= SAL_PAD_A;
+    if (b & B::B) p |= SAL_PAD_B;
+    if (b & B::X) p |= SAL_PAD_X;
+    if (b & B::Y) p |= SAL_PAD_Y;
+    if (b & B::SELECT) p |= SAL_PAD_SELECT;
+    if (b & B::START) p |= SAL_PAD_START;
+    if (b & B::UP) p |= SAL_PAD_UP;
+    if (b & B::DOWN) p |= SAL_PAD_DOWN;
+    if (b & B::LEFT) p |= SAL_PAD_LEFT;
+    if (b & B::RIGHT) p |= SAL_PAD_RIGHT;
+    return p;
+}
+
+// The two players' controllers. Player 1: the first USB pad, the first GPIO
+// pad and the Wii pad; player 2: the second USB pad and the second GPIO pad.
+static void readPads(uint16_t wii, uint32_t *p1, uint32_t *p2)
+{
+    typedef io::GamePadState::Button B;
+    uint32_t a = 0, b = 0;
+    auto &gp = io::getCurrentGamePadState(0);
+    if (gp.connected)
+        a |= gp.buttons;
+    auto &gp2 = io::getCurrentGamePadState(1);
+    if (gp2.connected)
+        b |= gp2.buttons;
+#if NES_PIN_CLK != -1
+    a |= nespadGameBits(nespad_states_ext[0], nespad_padtype[0]);
+#endif
+#if NES_PIN_CLK_1 != -1
+    b |= nespadGameBits(nespad_states_ext[1], nespad_padtype[1]);
+#endif
+    if (wii & (1u << 0)) a |= B::A;
+    if (wii & (1u << 1)) a |= B::B;
+    if (wii & (1u << 2)) a |= B::SELECT;
+    if (wii & (1u << 3)) a |= B::START;
+    if (wii & (1u << 4)) a |= B::UP;
+    if (wii & (1u << 5)) a |= B::DOWN;
+    if (wii & (1u << 6)) a |= B::LEFT;
+    if (wii & (1u << 7)) a |= B::RIGHT;
+    if (wii & (1u << 8)) a |= B::X;
+    if (wii & (1u << 9)) a |= B::Y;
+    *p1 = padBits(a);
+    *p2 = padBits(b);
+}
+
+// ---------------------------------------------------------------------------
+// Wii Classic controller (I2C): started here before the game and retried
+// about once a second while no pad answers. From pico-mooncresta.
+// ---------------------------------------------------------------------------
+#if WII_PIN_SDA >= 0 and WII_PIN_SCL >= 0
+static void wiipadPoll()
+{
+    static int frames = 0;
+    if (wiipad_is_connected() || ++frames < 60)
+        return;
+    frames = 0;
+    wiipad_begin();
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// Frame pacing: one game frame per displayed frame, from the display's frame
+// counter (see pico-galagino's main.cpp). A frame that overruns a displayed
+// frame is caught up by starting the next one at once, so no sound is lost,
+// and the next picture is not drawn, which gives the time back; one more than
+// a frame behind, the missed frames are dropped.
+// ---------------------------------------------------------------------------
+static inline uint32_t displayFrameCounter()
+{
+    return hstx_getframecounter();
+}
+
+static void paceFrame(bool init)
+{
+    static uint32_t target = 0;
+    if (init)
+    {
+        target = displayFrameCounter();
+        skipDraw = false;
+        return;
+    }
+    target++;
+    const int32_t lag = (int32_t)(displayFrameCounter() - target);
+#if SAL_FRAME_STATS
+    const uint64_t w0 = Frens::time_us();
+#endif
+    skipDraw = false;
+    if (lag < 0)
+    {
+        while ((int32_t)(displayFrameCounter() - target) < 0)
+            __compiler_memory_barrier(); // the counter is advanced by core1
+    }
+    else if (lag > 0)
+    {
+        target = displayFrameCounter();
+        skipDraw = true;
+#if SAL_FRAME_STATS
+        stats.late++;
+#endif
+    }
+#if SAL_FRAME_STATS
+    const uint32_t idle = (uint32_t)(Frens::time_us() - w0);
+    stats.idle_sum += idle;
+    if (idle < stats.idle_min)
+        stats.idle_min = idle;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Once per frame
+// ---------------------------------------------------------------------------
+static void processPerFrame()
+{
+    paceFrame(false);
+
+    presentFrame(); // and, after its first band, the sound of an earlier frame
+
+    Frens::pollHeadPhoneJack();
+
+#if ENABLE_VU_METER
+    // Fruit Jam Button 2 toggles the VU meter, as in the sibling emulators.
+    if (isVUMeterToggleButtonPressed())
+    {
+        settings.flags.enableVUMeter = !settings.flags.enableVUMeter;
+        FrensSettings::savesettings();
+        turnOffAllLeds();
+    }
+#endif
+
+    nespad_read_start();
+    Frens::blinkLed((displayFrameCounter() >> 5) & 1);
+    nespad_read_finish();
+
+    tuh_task();
+    uint16_t wii = 0;
+#if WII_PIN_SDA >= 0 and WII_PIN_SCL >= 0
+    wiipadPoll();
+    wii = wiipad_read(); // boards without the Wii port do not link wiipad at all
+#endif
+
+    uint32_t p1 = 0, p2 = 0;
+    readPads(wii, &p1, &p2);
+    int settingsCombo = 0, fpsToggle = 0;
+    const uint32_t in = sal_pads_map(&pads, p1, p2, settings.flags.rapidFireOnA, &settingsCombo, &fpsToggle);
+    if (fpsToggle)
+        settings.flags.displayFrameRate = !settings.flags.displayFrameRate;
+    if (settingsCombo)
+        showSettings = true;
+
+    if (showSettings)
+    {
+        showSettings = false;
+        waitSound(); // core1 idle: Reset Game resets the sound board from here
+        audioPending = false;
+        g_settings_visibility =
+            (state == State::Game && navailable > 1) ? g_settings_visibility_sal_quit : g_settings_visibility_sal;
+        int rval = showSettingsMenu(true);
+
+        // menu.cpp saves only down the SAVE path; `settings` only ever holds
+        // committed values, so writing again can never persist a cancelled edit.
+        FrensSettings::savesettings();
+        scaleMode8_7_ = Frens::applyScreenMode(settings.screenMode);
+        EXT_AUDIO_SETVOLUME(settings.fruitjamVolumeLevel);
+
+        // Without a set there is nothing to return to. Reboot, so a set just
+        // copied onto the card in USB drive mode is picked up.
+        if (state == State::NoSets)
+        {
+            printf("Rebooting to look for the ROM sets again...\n");
+            watchdog_reboot(0, 0, 0);
+            while (true)
+                tight_loop_contents();
+        }
+        if (state == State::Game)
+        {
+            if (rval == 3 && navailable > 1) // Quit game: back to the set menu
+                enterChooser();
+            else if (rval == 5) // Reset Game
+            {
+                sal_reset();
+                sal_sound_reset();
+                sal_render_begin();
+            }
+        }
+        else if (state == State::Chooser)
+        {
+            chooserDrawn = false;
+        }
+        else if (state == State::Failed)
+        {
+            enterSets();
+        }
+        else if (state == State::NoPsram)
+        {
+            drawNoPsramScreen();
+        }
+        sal_pads_reset(&pads);
+        bordersValid = false; // the menu drew over the whole screen
+        paceFrame(true);
+        lastFrameUs = Frens::time_us();
+        return;
+    }
+
+    switch (state)
+    {
+    case State::Game:
+    {
+        const uint64_t t0 = Frens::time_us();
+        sal_run_frame(in);
+        makeSound();
+        sal_render_begin(); // the next draw's sprites and colours, from this frame
+#if SAL_FRAME_STATS
+        statsAdd((uint32_t)(Frens::time_us() - t0), lastDrawUs);
+#else
+        (void)t0;
+#endif
+        break;
+    }
+    case State::Chooser:
+    {
+        // silence: pushed as audioBuf, core1 making nothing
+        memset(audioBuf, 0, sizeof(audioBuf));
+        if (!soundOnCore1)
+            audioPending = true;
+        const uint32_t pushed = p1 & ~chooserPrev;
+        chooserPrev = p1;
+        if (p1)
+            chooserIdle = 0;
+        if (pushed & (SAL_PAD_UP | SAL_PAD_DOWN))
+        {
+            const int dir = (pushed & SAL_PAD_UP) ? -1 : 1;
+            int s = chooserSel;
+            for (int k = 0; k < SAL_SET_COUNT; k++)
+            {
+                s = (s + dir + SAL_SET_COUNT) % SAL_SET_COUNT;
+                if (available[s] >= 0)
+                    break;
+            }
+            chooserSel = s;
+        }
+        drawChooser();
+        if ((pushed & (SAL_PAD_A | SAL_PAD_START)) || ++chooserIdle >= CHOOSER_TIMEOUT_FRAMES)
+        {
+            startSet(chooserSel);
+            bordersValid = false;
+            paceFrame(true);
+        }
+        break;
+    }
+    case State::Failed:
+        if (p1 & SAL_PAD_START)
+        {
+            enterSets();
+            bordersValid = false;
+        }
+        break;
+    case State::NoSets:
+    case State::NoPsram:
+        break;
+    }
+
+    if (settings.flags.displayFrameRate)
+    {
+        uint64_t now = Frens::time_us();
+        uint64_t dt = now - lastFrameUs;
+        lastFrameUs = now;
+        if (dt > 0)
+            fps = (uint32_t)((1000000 + dt / 2) / dt);
+    }
+}
+
+int main()
+{
+    // The clock is fixed (see SAL_CLOCKFREQ_KHZ): with the two limits equal
+    // there is nothing to choose; initAll() reconciles the setting with
+    // FlashParams.
+    Frens::setOverclockLimits(SAL_CLOCKFREQ_KHZ, SAL_CLOCKFREQ_KHZ, SAL_VOLTAGE, SAL_VOLTAGE);
+    Frens::setClocksAndStartStdio(SAL_CLOCKFREQ_KHZ, SAL_VOLTAGE);
+
+    printf("==========================================================================================\n");
+    printf("picoSalamander %s\n", SWVERSION);
+    printf("Build date: %s %s\n", __DATE__, __TIME__);
+    printf("HW_CONFIG=%d  HSTX=%d  CPU freq: %lu kHz\n", HW_CONFIG, HSTX, (unsigned long)(clock_get_hz(clk_sys) / 1000));
+    printf("==========================================================================================\n");
+
+#if SAL_FRAME_STATS
+    statsStartCounter();
+#endif
+    FrensSettings::initSettings(FrensSettings::ARCADE);
+    sal_init(SAL_FMT_RGB555, SAMPLERATE);
+
+    // No ROM is ever selected through the browser; the sets are read below.
+    char dummyRom[FF_MAX_LFN];
+    dummyRom[0] = 0;
+    sdOk = Frens::initAll(dummyRom, SAL_CLOCKFREQ_KHZ, 0, 0, AUDIOBUFFERSIZE, false, true);
+
+    if (sdOk)
+    {
+        // loadsettings() inside initAll resets every setting when
+        // settings.currentDir does not exist. There is no ROM browser to
+        // create it, so make it (FR_EXIST later on is fine) and load again.
+        f_mkdir("/roms");
+        f_mkdir(ROMROOT);
+        f_mkdir(ROMROOT "/SALAMAND");
+        f_mkdir(ROMROOT "/LIFEFRCE");
+        FrensSettings::loadsettings();
+    }
+    // All arcade games share /settings_ARC.dat and with it currentDir. Keep it
+    // at /roms/arcade, which every arcade game creates.
+    strcpy(settings.currentDir, ROMROOT);
+    g_settings_visibility = g_settings_visibility_sal;
+    g_available_screen_modes = g_available_screen_modes_sal;
+    if (!g_available_screen_modes[static_cast<int>(settings.screenMode)])
+        settings.screenMode = ScreenMode::NOSCANLINE_1_1;
+    scaleMode8_7_ = Frens::applyScreenMode(settings.screenMode);
+    // Apply the saved DAC volume now; otherwise it only takes effect after the
+    // settings menu has been opened and closed. No-op without a TLV320.
+    EXT_AUDIO_SETVOLUME(settings.fruitjamVolumeLevel);
+
+#if WII_PIN_SDA >= 0 and WII_PIN_SCL >= 0
+    // after initAll(), so after the DAC: see wiipadPoll()
+    if (!wiipad_is_connected())
+        wiipad_begin();
+#endif
+
+    video_output_set_background_task(soundTask);
+    soundOnCore1 = true;
+    printf("Sound board on core1\n");
+
+    if (!Frens::isPsramEnabled())
+    {
+        printf("No PSRAM: the game cannot run\n");
+        state = State::NoPsram;
+        drawNoPsramScreen();
+    }
+    else
+    {
+        probeSets();
+        enterSets();
+    }
+
+    paceFrame(true);
+    lastFrameUs = Frens::time_us();
+    while (true)
+        processPerFrame();
+}
