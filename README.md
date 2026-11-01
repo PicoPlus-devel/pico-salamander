@@ -19,13 +19,17 @@ It uses the same menu, display, audio and controller framework as this family of
 
 **The ROM sets are not included and must be supplied by the user.** They are copyright Konami and are not distributed with this project.
 
+**updateAll can download the ROM sets.** updateAll, the ROM set installer included in every release as `updateAll.exe` (Windows; a Python version for Linux and macOS is available in pico-bootLoader), downloads the two sets from a third-party database when they are not at hand and installs them on the SD card. The user remains responsible for holding the rights to the sets. See [Game data](#game-data).
+
+The emulator can also be started from [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader), where it appears in the Arcade category.
+
 ***
 
 ## Getting started
 
 1. **Flash the emulator.** Download the `.uf2` for your board from the [Releases](https://github.com/PicoPlus-devel/pico-salamander/releases) page; the table under [Supported hardware](#supported-hardware) gives the file name for each board. Hold BOOTSEL, connect the board over USB, and copy the `.uf2` onto the `RP2350` drive that appears.
 2. **Prepare the SD card.** Format a microSD card as FAT32 (recommended) or exFAT. The board creates the folders `/roms/arcade/SALAMAND` and `/roms/arcade/LIFEFRCE` the first time it starts with the card inserted, and shows which files it is missing.
-3. **Copy the ROM sets.** Copy MAME's `salamand.zip` into `/roms/arcade/SALAMAND` and `lifefrce.zip` into `/roms/arcade/LIFEFRCE`, with a card reader or through [USB drive mode](#usb-drive-mode) from the screen that reports the missing files. One of the two games is enough. The ROM sets are not part of this project, and holding the rights to them is the user's responsibility; [Game data](#game-data) describes which versions are accepted and how the files are recognised. The `updateAll` installer of the sister projects does not install these sets yet.
+3. **Copy the ROM sets.** Copy MAME's `salamand.zip` into `/roms/arcade/SALAMAND` and `lifefrce.zip` into `/roms/arcade/LIFEFRCE`, with a card reader or through [USB drive mode](#usb-drive-mode) from the screen that reports the missing files. One of the two games is enough. The ROM sets are not part of this project, and holding the rights to them is the user's responsibility; [Game data](#game-data) describes which versions are accepted and how the files are recognised, and how `updateAll`, included in every release, installs the sets from a Windows computer.
 4. **Play.** Insert the card and power on the board. With both sets on the card, a menu chooses the game; with one, that game starts. Press **SELECT** to insert a coin and **START** to play.
 
 ***
@@ -89,6 +93,17 @@ Copy the sets to their folders in either form:
 - **The files, unzipped.** Subfolders named after the set or its clones (`salamand`, `salamandj`, ...), which unzipping commonly produces, are searched as well.
 
 Files are recognised by their size and CRC32, so their names do not matter, and a corrupt or different file is never loaded. The board creates the two folders on first start.
+
+**updateAll installs the sets.** `updateAll.exe`, a program for Windows 10 and 11, is included in every release of pico-salamander, among the files at the end of the release page. It runs on a computer with the SD card inserted: it takes `salamand.zip` and `lifefrce.zip` from a folder of your choice, or downloads them when they are not there, and writes the sets, unzipped, into `/roms/arcade/SALAMAND` and `/roms/arcade/LIFEFRCE`. It installs Salamander version D, `salamand`, and Lifeforce US, `lifefrce`, both from a merged `salamand.zip`, or Lifeforce from `lifefrce.zip` together with a split `salamand.zip`. It is a single file and needs no installation. The program is not signed, so Windows may show "Windows protected your PC" the first time it is started; select **More info**, then **Run anyway**.
+
+1. Start `updateAll.exe`. It selects a removable drive by itself; under **SD card**, check that it is the card, or choose another.
+2. Under **Zip folder**, choose the folder with the MAME zips you already have, if any.
+3. Untick the sets that are not wanted. updateAll also installs the sets of other applications of this family, such as pico-galagino and pico-outrun; pico-salamander needs only the sets **Salamander** and **Lifeforce**, or one of them. The **Status** column shows which sets are already complete on the card.
+4. Select **Install**.
+
+By default, zips that are not in the zip folder are downloaded from [ArcadeROMsDB_MiSTer](https://github.com/zakk4223/ArcadeROMsDB_MiSTer), a third-party database that is not part of this project. The user is responsible for holding the rights to the ROM sets, whether they are supplied as zips or downloaded. To use only your own zips, untick **Download missing files**.
+
+updateAll is maintained in [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader), whose SD-card archive carries it as well. The same installer is also available there as a Python script, `updateAll.py`, for Linux and macOS, and as a PowerShell script, `updateAll.ps1`. The [updateAll README](https://github.com/PicoPlus-devel/pico-bootLoader/blob/main/updateAll/README.md) describes all three and their options.
 
 When both games are on the card, a menu at start-up chooses one; it starts the game played last after 10 seconds without input. *Quit game* in the settings menu returns to it.
 
@@ -239,7 +254,7 @@ cd pico-salamander
 
 Every configuration must be built with `-2` (RP2350). `EXTRA_CMAKE_ARGS=-DSAL_FRAME_STATS=1` prints over the serial console, every five seconds, the time a frame takes per part (main CPU, sound board, YM2151, drawing) and the time left before the display needs the next frame.
 
-Two generated files are checked in, so the build does not need Python. `salamand/z80_ops.h`, the instruction loop of the Z80 core, comes from MAME's opcode list `salamand/z80.lst` through `tools/z80gen.py`. `salamand/musashi/m68kops.c` holds Musashi's 68000 opcode handlers with the dispatch tables of `tools/m68k_dispatch.py` in place of the jump table Musashi builds at run time, which would take 320 KB of RAM; the script also marks the handlers the game runs most (`salamand/musashi/hot_handlers.txt`, from a profile made by the host harness) for placement in SRAM. The built-in screensaver image (`DefaultSS444.c`, `DefaultSS555.c`) is made from a frame of the game by `tools/mkdefaultss.py`; it takes the picture from your own ROM set through the host harness.
+Two generated files are checked in, so the build does not need Python. `salamand/z80_ops.h`, the instruction loop of the Z80 core, comes from MAME's opcode list `salamand/z80.lst` through `tools/z80gen.py`. `salamand/musashi/m68kops.c` holds Musashi's 68000 opcode handlers with the dispatch tables of `tools/m68k_dispatch.py` in place of the jump table Musashi builds at run time, which would take 320 KB of RAM; the script also marks the handlers the game runs most (`salamand/musashi/hot_handlers.txt`, from a profile made by the host harness) for placement in SRAM. The built-in screensaver image (`DefaultSS444.c`, `DefaultSS555.c`) is made from a frame of the game by `tools/mkdefaultss.py`, the screenshots of this README by `tools/screenshots.sh`, and the menu artwork of pico-bootLoader (`emu/assets/themes/0/salamander.png` and `themes/1/salamander.png`) by `tools/mkartwork.py` from the frames of `tools/capture_footage.sh`; all take the pictures from your own ROM sets through the host harness. `tools/mkupdateall.py` writes the two sets into pico-bootLoader's `updateAll/updateAll.json` from the ROM table, `salamand/sal_sets.c`.
 
 ### Host test harness
 
@@ -259,6 +274,7 @@ The emulated board in `salamand/` is plain C without Pico dependencies, and also
 - The ROM loader, the drawing in bands, the sound board a frame behind on the second core and the host harness follow pico-1943 and pico-galagino.
 - The research of [Liu Szuping](https://github.com/szuping) for an earlier RP2350 port of Salamander (hardware notes, timing measurements and a profile of the game) served as a reference.
 - miniz (inflate and CRC32): Rich Geldreich and others; see the licence text in [third_party/miniz/miniz.c](third_party/miniz/miniz.c).
+- updateAll, the ROM set installer included in the releases as `updateAll.exe`: [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader/tree/main/updateAll), under the GNU General Public License v3.0, built with miniz and cJSON (MIT licence). Its source is in that repository.
 
 ### Use of AI
 

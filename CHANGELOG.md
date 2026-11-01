@@ -22,9 +22,13 @@ Initial release.
 - Two players can play at the same time, the second on a second controller.
 - The board runs at 384 MHz.
 - With a USB keyboard, Enter selects and Esc goes back in the menus.
+- Can be started from pico-bootLoader, where it appears in the Arcade category.
+- The release includes updateAll.exe, which installs the ROM sets on the SD card from a Windows computer. The readme explains how to use it.
 
 <a name="downloads___"></a>
 ## Downloads by configuration
+
+The ROM set installer for Windows: [updateAll.exe](https://github.com/PicoPlus-devel/pico-salamander/releases/latest/download/updateAll.exe)
 
 Binaries for each configuration are listed below. Only RP2350-based boards with PSRAM and HSTX video output are supported.
 
