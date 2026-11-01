@@ -51,11 +51,11 @@
 #error "picoSalamander needs a board with HSTX video output"
 #endif
 
-// 384 MHz at 1.50 V on every board: 8 x 48 MHz, so USB runs from PLL_SYS and
+// 384 MHz at 1.35 V on every board: 8 x 48 MHz, so USB runs from PLL_SYS and
 // PLL_USB is the 126 MHz HSTX clock (pico_shared's setClocksAndStartStdio).
 // Fixed: the Overclock entry of the settings menu is not offered.
 #define SAL_CLOCKFREQ_KHZ 384000
-#define SAL_VOLTAGE VREG_VOLTAGE_1_50
+#define SAL_VOLTAGE VREG_VOLTAGE_1_35
 
 // Must be a power of two (util::RingBuffer asserts it). It holds the audio
 // cushion (see pushAudio()) plus a whole frame of 735 samples. The I2S ring of

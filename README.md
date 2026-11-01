@@ -94,11 +94,12 @@ Salamander has an eight-way joystick and two buttons for each player (power-up, 
 | X or Y | Missile (Lifeforce Japan) |
 | SELECT | Insert a coin (on release) |
 | START | 1 player start |
+| SELECT on the second controller | Insert a coin in the second slot (on release) |
 | START on the second controller | 2 player start |
 | START + A | Frame rate display on/off |
 | SELECT + START | Settings menu |
 
-The first controller plays player 1 and the second controller player 2: the second USB controller, or the controller on the second GPIO port. USB game controllers, NES and SNES controllers on the GPIO ports and the Wii Classic controller (player 1) are supported, as in the other emulators of this family. A has a rapid fire setting. The coin is inserted when SELECT is released, and only when no other button was pressed while it was held, so opening the settings menu does not insert a coin. While START is held, A switches the frame rate display (top left, in the border) on or off instead of shooting; the same setting is also in the settings menu.
+The first controller plays player 1 and the second controller player 2: the second USB controller, or the controller on the second GPIO port. USB game controllers, NES and SNES controllers on the GPIO ports and the Wii Classic controller (player 1) are supported, as in the other emulators of this family. A has a rapid fire setting. A coin is inserted when SELECT is released, and only when no other button was pressed while it was held, so opening the settings menu does not insert a coin; each controller's SELECT feeds its own coin slot, so a two player game is started with a credit from each controller (or two from the first) and START on the second controller. While START is held, A switches the frame rate display (top left, in the border) on or off instead of shooting; the same setting is also in the settings menu.
 
 The DIP switches are at MAME's defaults: 1 coin for 1 credit, 3 lives, normal difficulty, demo sounds on, upright cabinet.
 

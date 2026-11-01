@@ -11,8 +11,9 @@
  *   START        1 player start; START on the second controller: 2 players
  *   START + A    shows or hides the frame rate
  *
- * The second controller plays player 2. Rapid fire, when set for A: 4 frames
- * pressed, 4 released.
+ * The second controller plays player 2; its SELECT inserts a coin in the
+ * second slot, the same way. Rapid fire, when set for A: 4 frames pressed, 4
+ * released.
  */
 #ifndef SAL_INPUT_H
 #define SAL_INPUT_H
@@ -41,8 +42,8 @@ extern "C" {
 typedef struct
 {
     uint32_t prev, prev2;
-    int select_used;
-    int coin;
+    int select_used, select2_used;
+    int coin, coin2;
     int wait_release;
     uint32_t frame;
 } sal_pads_t;
