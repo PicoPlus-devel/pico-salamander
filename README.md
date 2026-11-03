@@ -71,7 +71,7 @@ The games as the emulator draws them. The pictures were captured with the [host 
 Worth knowing before you start:
 
 - **No save states, and high scores are not kept.** A high score survives until the board is reset or powered off.
-- **The DIP switches are fixed** at MAME's defaults: 1 coin for 1 credit, 3 lives, normal difficulty, demo sounds on, upright cabinet. There is no menu for them, and the flipped picture of a cocktail cabinet is not emulated.
+- **The DIP switches start at MAME's defaults**: 1 coin for 1 credit, 3 lives, normal difficulty, demo sounds on, upright cabinet. They can be changed in the settings menu; see [DIP switches](#dip-switches). The flip screen and cabinet switches are not offered, because the flipped picture of a cocktail cabinet is not emulated.
 - Development and testing take place on the Adafruit Fruit Jam. The other supported boards are built by the release workflow but need more testing. Running without PSRAM has been tested on a plain Raspberry Pi Pico 2 (HW_CONFIG 2) and on the Fruit Jam with the *Disable PSRAM* setting.
 
 ***
@@ -169,7 +169,7 @@ Gavin Knight ([DynaMight1124](https://github.com/DynaMight1124)) designed an NES
 The SD card holds the ROM sets and the settings, and is required. On a board without PSRAM, a game already copied into flash also starts without it, and its settings are then not remembered.
 
 1. **The ROM sets.** Format the card as FAT32 (recommended) or exFAT and copy the sets into `/roms/arcade/SALAMAND` and `/roms/arcade/LIFEFRCE`; see [Game data](#game-data). The folders are created automatically on first start.
-2. **Settings.** Screen mode, audio output and the other options of the settings menu are stored in `/settings_ARC.dat` in the root of the card and are remembered across restarts. The file is shared by all arcade games of this family. The game chosen last is kept in `/roms/arcade/SALAMAND/LASTSET.TXT`.
+2. **Settings.** Screen mode, audio output and the other options of the settings menu are stored in `/settings_ARC.dat` in the root of the card and are remembered across restarts. The file is shared by all arcade games of this family. The game chosen last is kept in `/roms/arcade/SALAMAND/LASTSET.TXT`, and the DIP switches of each game in `DIPS.TXT` in its folder.
 
 There are no save files: the game has no save states, and high scores are not written to the card.
 
@@ -229,13 +229,30 @@ Salamander has an eight-way joystick and two buttons for each player: the power-
 
 A coin is inserted when SELECT is released, and only when no other button was pressed while it was held, so opening the settings menu does not insert a coin. Each controller's SELECT feeds its own coin slot: a two player game is started with a credit from each controller (or two from the first) and START on the second controller. While START is held, A switches the frame rate display (top left, in the border) on or off instead of shooting; the same setting is also in the settings menu. A has a rapid fire setting.
 
-**SELECT + START** opens the settings menu while the game keeps its state; leaving the menu returns to where you were. It offers the screen mode (with or without scanlines) and the scanline type, the frame rate display, audio on/off, rapid fire on A, the external audio output on boards that have one, the volume and the NeoPixel VU meter on the Fruit Jam, *Reset Game*, the controller test screen, [USB drive mode](#usb-drive-mode), BOOTSEL mode, the overscan fix for the menus and, on boards with PSRAM, *Disable PSRAM*. With both games on the card it also offers *Quit game*, which returns to the menu that chooses the game, and when started from pico-bootLoader *Return to emulator selection menu*. Settings are remembered on the SD card. In the settings menu, press SELECT on any setting to jump straight to the SAVE/CANCEL/DEFAULT row. Changes are only applied when **SAVE** is selected.
+**SELECT + START** opens the settings menu while the game keeps its state; leaving the menu returns to where you were. It offers the screen mode (with or without scanlines) and the scanline type, the frame rate display, audio on/off, rapid fire on A, the external audio output on boards that have one, the volume and the NeoPixel VU meter on the Fruit Jam, *Reset Game*, the controller test screen, [USB drive mode](#usb-drive-mode), BOOTSEL mode, the overscan fix for the menus, the [DIP switches](#dip-switches) of the running game and, on boards with PSRAM, *Disable PSRAM*. With both games on the card it also offers *Quit game*, which returns to the menu that chooses the game, and when started from pico-bootLoader *Return to emulator selection menu*. Settings are remembered on the SD card. In the settings menu, press SELECT on any setting to jump straight to the SAVE/CANCEL/DEFAULT row. Changes are only applied when **SAVE** is selected.
 
 **Overscan fix in menu** is meant for TVs that cut off the edges of the picture: **Rows** leaves the top and bottom text rows of the settings menu blank, **Rows & columns** also leaves the first and last columns blank. It applies to the settings menu only, not to the game picture.
 
 **Disable PSRAM** is a testing aid: set to **YES** and saved, it restarts the board, which then runs as a board without PSRAM, from a copy in flash; see [Boards without PSRAM](#game-data). Setting it to **NO** and saving returns to PSRAM. The setting is stored in the flash of the board, not on the SD card, and a firmware update can reset it to **NO**.
 
 Entries that the sister projects offer are absent here because they have nothing to act on: there are no save states, no frame skip setting and no *Overclock* setting, since the clock is fixed; see [Overclocking](#overclocking).
+
+### DIP switches
+
+While a game is running, the settings menu also lists the DIP switches of that game. Saving a changed switch restarts the game, so the current game and the high score are lost. **CANCEL** leaves the game running. **DEFAULT** selects MAME's defaults, which take effect when saved. The choices are kept per game and version.
+
+| Setting | Salamander, Lifeforce (US) | Lifeforce (Japan) |
+| --- | --- | --- |
+| Coins per credit | *Coinage* | *Coin A* and *Coin B*, one for each coin slot |
+| Lives | 2, 3, 5, 7 | 3, 4, 5, 6 |
+| Coin slots | 1, 2 | 1, 2 |
+| Max credits | 1, 3, 5, 9 | Not available |
+| Bonus life | Not available | 70k and every 200k, 100k and every 300k, 70k only, 100k only |
+| Difficulty | Easy, Normal, Hard, Hardest | Easy, Normal, Hard, Hardest |
+| Demo sounds | Off, On | Off, On |
+| Service mode | Off, On | Off, On |
+
+With *Service mode* on, the game starts in its own test screens instead of the game. Press START to move past the color test. Turn it off in the settings menu to play again. The setting that disables the coin slots is not offered, because no game could then be started.
 
 ***
 

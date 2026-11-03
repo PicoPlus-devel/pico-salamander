@@ -50,6 +50,7 @@ typedef struct
     uint8_t irq1_on, flipx, flipy; /* the interrupt latch (0a0001) */
     uint8_t outlatch;              /* 0a0000: bit 3 the sound CPU's interrupt */
     uint8_t dsw0, dsw1;
+    uint8_t in0_dips; /* 0c2000: b5-7, the DIPs among the inputs */
     uint32_t inputs;
     int32_t frame_cycle; /* 68000 cycles of the frame done at the start of the slice being run */
     uint8_t palette_dirty;

@@ -13,6 +13,10 @@ An emulator of the arcade games Salamander and Lifeforce (Konami, 1986) for RP23
 
 # Changelog
 
+## v0.3
+
+- The DIP switches can now be changed in the settings menu: coins per credit, lives, difficulty, demo sounds and more. The game's own test screens are there too, as *Service mode*. Saving a change restarts the game.
+
 ## v0.2
 
 - Boards without PSRAM can now play, such as the Raspberry Pi Pico 2. The first time a game starts, it is copied into the flash memory of the board, which takes a few seconds. After that it also starts without the SD card.

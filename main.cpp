@@ -26,6 +26,7 @@
  */
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "pico/stdlib.h"
@@ -662,6 +663,154 @@ static void probeSets()
 }
 
 // ---------------------------------------------------------------------------
+// The DIP switches: rows of the settings menu while a set runs
+// (menuSetEmulatorOptions in menu.h), kept in a file in the set's folder with
+// a line per variant, "salamandj=ff 42 e0": DSW0, DSW1 and IN0, in hex. Saving
+// a change restarts the game, which then sees the switches from its start.
+// ---------------------------------------------------------------------------
+#define DIPS_FILE "DIPS.TXT"
+
+static const sal_dip_t *dips = nullptr;
+static int ndips = 0;
+static uint8_t dipPorts[SAL_DIP_PORTS];
+static bool dipsChanged = false;
+static MenuEmulatorOption dipOptions[MENU_MAX_EMULATOR_OPTIONS];
+
+// What the file holds per variant of the set; have[v]: it holds variant v.
+static void readDipFile(int set, uint8_t ports[][SAL_DIP_PORTS], bool *have)
+{
+    if (!sdOk)
+        return;
+    char path[48];
+    snprintf(path, sizeof(path), ROMROOT "/%s/" DIPS_FILE, sal_sets[set].folder);
+    char text[SAL_MAX_VARIANTS * 24];
+    UINT n = 0;
+    FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
+    if (fil && f_open(fil, path, FA_READ) == FR_OK)
+    {
+        if (f_read(fil, text, sizeof(text) - 1, &n) != FR_OK)
+            n = 0;
+        f_close(fil);
+    }
+    Frens::f_free(fil);
+    text[n] = 0;
+    for (char *line = strtok(text, "\r\n"); line; line = strtok(nullptr, "\r\n"))
+    {
+        char *p = strchr(line, '=');
+        if (!p)
+            continue;
+        *p++ = 0;
+        for (int v = 0; v < sal_sets[set].nvariants; v++)
+        {
+            if (strcmp(line, sal_sets[set].variant_set[v]))
+                continue;
+            uint8_t got[SAL_DIP_PORTS];
+            int i = 0;
+            for (; i < SAL_DIP_PORTS; i++)
+            {
+                char *end;
+                const unsigned long x = strtoul(p, &end, 16);
+                if (end == p || x > 0xff)
+                    break;
+                got[i] = (uint8_t)x;
+                p = end;
+            }
+            if (i == SAL_DIP_PORTS)
+            {
+                memcpy(ports[v], got, sizeof(got));
+                have[v] = true;
+            }
+        }
+    }
+}
+
+// The running variant's switches; the lines of the set's other variants stay.
+static void saveDips()
+{
+    if (!sdOk)
+        return;
+    const sal_set_info_t *si = &sal_sets[running];
+    uint8_t ports[SAL_MAX_VARIANTS][SAL_DIP_PORTS];
+    bool have[SAL_MAX_VARIANTS] = {};
+    readDipFile(running, ports, have);
+    memcpy(ports[available[running]], dipPorts, sizeof(dipPorts));
+    have[available[running]] = true;
+
+    char path[48];
+    snprintf(path, sizeof(path), ROMROOT "/%s/" DIPS_FILE, si->folder);
+    FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
+    if (fil && f_open(fil, path, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
+    {
+        for (int v = 0; v < si->nvariants; v++)
+        {
+            if (!have[v])
+                continue;
+            char line[32];
+            const int n = snprintf(line, sizeof(line), "%s=%02x %02x %02x\n", si->variant_set[v], ports[v][SAL_DIP_DSW0],
+                                   ports[v][SAL_DIP_DSW1], ports[v][SAL_DIP_IN0]);
+            UINT bw;
+            f_write(fil, line, n, &bw);
+        }
+        f_close(fil);
+    }
+    Frens::f_free(fil);
+}
+
+template <int K>
+static int dipGet()
+{
+    return sal_dip_choice(&dips[K], dipPorts);
+}
+
+// Called for every row on SAVE, in order. The file is written at the last row,
+// not when the menu returns: saving a change of Disable PSRAM restarts the
+// board from within the menu.
+template <int K>
+static void dipSet(int choice)
+{
+    const uint8_t was = dipPorts[dips[K].port];
+    sal_dip_select(&dips[K], dipPorts, choice);
+    if (dipPorts[dips[K].port] != was)
+        dipsChanged = true;
+    if (K == ndips - 1 && dipsChanged)
+        saveDips();
+}
+
+static int (*const dipGets[MENU_MAX_EMULATOR_OPTIONS])(void) = {
+    dipGet<0>, dipGet<1>, dipGet<2>, dipGet<3>, dipGet<4>, dipGet<5>, dipGet<6>, dipGet<7>,
+};
+static void (*const dipSets[MENU_MAX_EMULATOR_OPTIONS])(int) = {
+    dipSet<0>, dipSet<1>, dipSet<2>, dipSet<3>, dipSet<4>, dipSet<5>, dipSet<6>, dipSet<7>,
+};
+
+// The rows of the variant just started, and the values kept for it. What the
+// file holds that is not a choice of a row is left at its default.
+static void startDips(int set, int variant)
+{
+    dips = sal_sets[set].dips[variant];
+    ndips = sal_sets[set].ndips[variant];
+    dipsChanged = false;
+
+    uint8_t defaults[SAL_DIP_PORTS];
+    sal_dip_defaults((sal_set_id_t)set, variant, defaults);
+    memcpy(dipPorts, defaults, sizeof(dipPorts));
+
+    uint8_t saved[SAL_MAX_VARIANTS][SAL_DIP_PORTS];
+    bool have[SAL_MAX_VARIANTS] = {};
+    readDipFile(set, saved, have);
+    for (int k = 0; k < ndips; k++)
+    {
+        const int choice = have[variant] ? sal_dip_choice(&dips[k], saved[variant]) : -1;
+        if (choice >= 0)
+            sal_dip_select(&dips[k], dipPorts, choice);
+        dipOptions[k] = {dips[k].label, dips[k].help, dips[k].count, dips[k].names,
+                         sal_dip_choice(&dips[k], defaults), dipGets[k], dipSets[k]};
+    }
+    menuSetEmulatorOptions(dipOptions, ndips);
+    sal_set_dips(dipPorts);
+}
+
+// ---------------------------------------------------------------------------
 // Starting a set
 // ---------------------------------------------------------------------------
 static void enterChooser();
@@ -735,6 +884,7 @@ static void startSet(int set)
     }
     arenaUsed = 0;
     sal_start((sal_set_id_t)set, v, parts, fastAlloc);
+    startDips(set, v);
     sal_sound_reset();
     sal_render_begin();
     running = set;
@@ -749,6 +899,7 @@ static void startSet(int set)
 static void enterChooser()
 {
     running = -1;
+    menuSetEmulatorOptions(nullptr, 0); // the DIP switches are those of a running set
     chooserIdle = 0;
     chooserDrawn = false;
     chooserPrev = ~0u;
@@ -1385,9 +1536,13 @@ static void processPerFrame()
         }
         if (state == State::Game)
         {
+            const bool newDips = dipsChanged;
+            dipsChanged = false;
+            if (newDips)
+                sal_set_dips(dipPorts);
             if (rval == 3 && navailable > 1) // Quit game: back to the set menu
                 enterChooser();
-            else if (rval == 5) // Reset Game
+            else if (rval == 5 || newDips) // Reset Game, or the DIP switches changed
             {
                 sal_reset();
                 sal_sound_reset();
