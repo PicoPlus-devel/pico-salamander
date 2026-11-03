@@ -41,6 +41,7 @@ CORE=(
   salamand/k007232.c
   salamand/vlm5030.c
   salamand/romload.c
+  salamand/sal_store.c
   third_party/miniz/miniz.c
 )
 MUSASHI=(

@@ -28,7 +28,7 @@ CFLAGS=(
 )
 CORE=(salamand/z80.c salamand/sal.c salamand/sal_sets.c salamand/sal_video.c salamand/sal_sound.c
       salamand/sal_input.c salamand/ym2151.c salamand/k007232.c salamand/vlm5030.c salamand/romload.c
-      third_party/miniz/miniz.c)
+      salamand/sal_store.c third_party/miniz/miniz.c)
 gcc "${CFLAGS[@]}" -c "$WORK/m68kcpu.c" -o "$WORK/m68kcpu.o"
 gcc "${CFLAGS[@]}" -c "$WORK/m68kops.c" -o "$WORK/m68kops.o"
 gcc "${CFLAGS[@]}" -c "$WORK/softfloat/softfloat.c" -o "$WORK/softfloat.o"

@@ -1,5 +1,5 @@
 # pico-salamander
-# Salamander and Lifeforce (Konami, 1986) for RP2350 boards with PSRAM and HSTX video output.
+# Salamander and Lifeforce (Konami, 1986) for RP2350 boards with HSTX video output.
 
 cmake_minimum_required(VERSION 3.13)
 
@@ -34,8 +34,7 @@ if(NOT PICO_BOARD)
 endif()
 
 # RP2350 with HSTX video output only: the board runs at 384 MHz, which the
-# PicoDVI back-end cannot (it ties the system clock to the pixel clock), and
-# needs PSRAM for the machine's data (checked at run time).
+# PicoDVI back-end cannot (it ties the system clock to the pixel clock).
 if(PICO_PLATFORM STREQUAL "rp2040")
     message(FATAL_ERROR
         "picoSalamander is RP2350-only - build with './bld.sh -2 -c <HW_CONFIG>'.")
@@ -98,6 +97,7 @@ set(SAL_CORE_SRC
     salamand/k007232.c
     salamand/vlm5030.c
     salamand/romload.c
+    salamand/sal_store.c
     third_party/miniz/miniz.c
 )
 set(SAL_M68K_SRC
@@ -215,6 +215,11 @@ target_compile_definitions(${projectname} PUBLIC
     ENABLEDVI=1
     FRENS_FORCE_USB_MSC_IN_SETTINGS=1   # no ROM browser: offer USB drive mode in the in-game settings
     I2S_AUDIO_RING_SIZE=2048            # room for the audio cushion and a whole frame, see pushAudio() in main.cpp
+    # The flash store (main.cpp) ends where the chip itself says it does
+    # (storage_get_flash_capacity()); the board header may set less, e.g. 4 MB
+    # for pico2. The SDK's flash_range_erase/program hard_assert against this,
+    # so it is the most XIP can reach. Spelled as BootPartition.cmake does.
+    PICO_FLASH_SIZE_BYTES=0x1000000
 )
 
 # ---------------------------------------------------------------------------

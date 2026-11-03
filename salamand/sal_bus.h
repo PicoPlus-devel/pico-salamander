@@ -5,7 +5,7 @@
  *
  * Instruction fetches and ROM reads go through sal_fetch_page: one pointer
  * per 4 KB page of the CPU's first megabyte, to the page's copy in SRAM (the
- * pages read most, sal.c), to the ROM image (PSRAM on the board), to the work
+ * pages read most, sal.c), to the ROM image (PSRAM or flash on the board), to the work
  * RAM, or to a page of zeros for what is not mapped. The RAM is 16-bit words
  * in the host's byte order, so a byte at address A is at byte A ^ 1 of its
  * word (both the host and the board are little-endian).

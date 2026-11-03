@@ -1,6 +1,6 @@
 /*
  * picoSalamander - Salamander and Lifeforce (Konami, 1986) for RP2350 boards
- * with PSRAM and HSTX video output.
+ * with HSTX video output.
  *
  * Boots the pico_shared framework, finds the ROM sets on the SD card, and runs
  * the board (salamand/) one frame per display frame. The core is plain C
@@ -14,8 +14,9 @@
  *     licence all play) and /roms/arcade/LIFEFRCE (lifefrce.zip; the US and
  *     Japanese versions), as zips or unzipped. With both on the card a small
  *     menu chooses; its Quit game returns there.
- *   - the machine's data (688 KB) does not fit in SRAM: it is built in PSRAM
- *     at every start. A board without PSRAM shows a screen saying so.
+ *   - the machine's data (688 KB) does not fit in SRAM. It is built in PSRAM
+ *     at every start; on a board without PSRAM it is copied into flash once
+ *     (see "The flash store").
  *
  * The board runs at 384 MHz, as pico-outrun does: the 68000, the drawing and
  * the controllers on core0, the sound board on core1 between the display's
@@ -46,6 +47,7 @@
 
 #include "sal.h"
 #include "sal_input.h"
+#include "sal_store.h"
 
 #if !HSTX
 #error "picoSalamander needs a board with HSTX video output"
@@ -115,7 +117,6 @@ extern "C" void video_output_set_background_task(void (*task)(void));
 // What the board is showing.
 enum class State
 {
-    NoPsram, // the board has no PSRAM: the game cannot run
     NoSets,  // no SD card, or no complete ROM set: what is missing
     Chooser, // both sets are there: which one
     Game,    // a set is running
@@ -185,6 +186,7 @@ static sal_pads_t pads;
         [MOPT_NES_PALETTE] = 0,   /* NES */                                             \
         [MOPT_BUTTON_LAYOUT] = 0, /* NES */                                             \
         [MOPT_TATE_MODE] = 0,     /* the game is horizontal */                          \
+        [MOPT_DISABLE_PSRAM] = 2, /* in-game: the only menu there is */                 \
     }
 
 int8_t g_settings_visibility_sal_quit[MOPT_COUNT] = SAL_VISIBILITY(1);
@@ -260,18 +262,6 @@ static void setDir(int set, char *buf, size_t n)
     snprintf(buf, n, ROMROOT "/%s", sal_sets[set].folder);
 }
 
-// The board has no PSRAM: nothing can run.
-static void drawNoPsramScreen()
-{
-    screenClear(SCR_BG);
-    screenText(-1, 1, "picoSalamander", SCR_HI, SCR_BG);
-    screenText(1, 4, "This board has no PSRAM.", SCR_HI, SCR_BG);
-    screenText(1, 6, "Salamander needs a board with PSRAM,", SCR_FG, SCR_BG);
-    screenText(1, 7, "such as the Adafruit Fruit Jam or a", SCR_FG, SCR_BG);
-    screenText(1, 8, "Pimoroni Pico Plus 2.", SCR_FG, SCR_BG);
-    screenText(1, 26, "SELECT+START opens settings.", SCR_HI, SCR_BG);
-}
-
 // No SD card, or no complete ROM set: the folders, and what is missing.
 static void drawNoSetsScreen()
 {
@@ -339,6 +329,17 @@ static void drawFailedScreen(int set, const char *why)
     screenText(1, 4, "could not be started:", SCR_FG, SCR_BG);
     screenText(1, 6, why, SCR_FILE, SCR_BG);
     screenText(1, 27, "Press START to continue.", SCR_HI, SCR_BG);
+}
+
+// A set is about to be copied into flash: the board restarts for it.
+static void drawCopyScreen(int set)
+{
+    screenClear(SCR_BG);
+    screenText(1, 9, sal_sets[set].title, SCR_HI, SCR_BG);
+    screenText(1, 11, "runs from flash. Its ROM set is", SCR_FG, SCR_BG);
+    screenText(1, 12, "copied there once: the board", SCR_FG, SCR_BG);
+    screenText(1, 13, "restarts and copies it, which", SCR_FG, SCR_BG);
+    screenText(1, 14, "takes less than a minute.", SCR_FG, SCR_BG);
 }
 
 // ---------------------------------------------------------------------------
@@ -459,7 +460,8 @@ static void ffClose(void *ctx, void *file)
     Frens::f_free(file);
 }
 
-// The loader's scratch buffers go where f_malloc puts them: PSRAM.
+// The loader's scratch buffers go where f_malloc puts them: PSRAM, or the SRAM
+// heap on a board without.
 static void *ffAlloc(void *ctx, uint32_t size)
 {
     (void)ctx;
@@ -502,7 +504,132 @@ static void psramFree(void *p)
 }
 
 // ---------------------------------------------------------------------------
-// The sets on the card
+// The flash store (boards without PSRAM).
+//
+// The machine's data is built in flash there; see salamand/sal_store.c. A set
+// is copied the first time it is started: startSet() notes it in a watchdog
+// scratch register and restarts the board, and initAll() runs prepareFlash()
+// once the SD card is mounted, before the display starts, so flash is erased
+// and programmed with nothing else running, and the framebuffer is free for the
+// copy. main() then starts the set at once.
+//
+// The store is the flash pico_shared sets aside for roms on such boards, after
+// the program (ROM_FILE_ADDR, maxRomSize), as large as the chip itself
+// reports; CMakeLists.txt sets PICO_FLASH_SIZE_BYTES to 16 MB so that the
+// SDK's flash functions accept every offset of a larger chip.
+//
+// scratch[0..1]: picoSalamander's own (the SDK uses 4..7 to reboot, pico_shared
+// 6 and 7 for pico-bootLoader). They survive the watchdog restart, also when
+// pico-bootLoader resumes the application, and are cleared by a power cycle.
+// The restart is made with watchdog_enable(): pico-bootLoader resumes the
+// application only after that. initAll() takes the same mark for a ROM picked
+// in pico_shared's browser, and flashes the ROM that browser picked last (of
+// any emulator) right where the store is; main() clears the mark before
+// initAll() (clearRestartMark()).
+// ---------------------------------------------------------------------------
+static constexpr uint32_t PENDING_COPY_MAGIC = 0x53414c50u; // "SALP"
+static constexpr uint32_t FRAMEBUFFER_BYTES = SCREENWIDTH * SCREENHEIGHT * sizeof(uint16_t);
+static_assert(FRAMEBUFFER_BYTES >= SAL_STORE_TEMP, "the framebuffer holds the flash store's copy buffer");
+static int copiedSet = -1; // the set copied at this boot, to start at once
+static bool storeOpen = false;
+
+static int takePendingCopy(int *variant)
+{
+    if (watchdog_hw->scratch[0] != PENDING_COPY_MAGIC)
+        return -1;
+    const uint32_t v = watchdog_hw->scratch[1];
+    watchdog_hw->scratch[0] = 0;
+    const uint32_t set = v & 0xff;
+    *variant = (int)((v >> 8) & 0xff);
+    return set < SAL_SET_COUNT && *variant < sal_sets[set].nvariants ? (int)set : -1;
+}
+
+// Before initAll(): no restart of picoSalamander is a ROM picked in the browser:
+// not the one for a copy into flash, nor the one that applies Disable PSRAM
+// (pico_shared's writeFlashParamsToFlash()).
+static void clearRestartMark()
+{
+    watchdog_hw->scratch[4] = 0; // the SDK's watchdog_enable() mark
+}
+
+static void flashErase(uint32_t offset, uint32_t len)
+{
+    Frens::flashEraseSafe(offset, len);
+}
+
+static void flashProgram(uint32_t offset, const uint8_t *data, uint32_t len)
+{
+    Frens::flashProgramSafe(offset, data, len);
+}
+
+static void flashCopying(int set)
+{
+    static bool led = false, told = false;
+    led = !led;
+    Frens::blinkLed(led);
+    if (!told)
+        printf("Copying %s to flash\n", sal_sets[set].title);
+    told = true;
+}
+
+static void openFlashStore()
+{
+    if (Frens::isPsramEnabled() || storeOpen || !ROM_FILE_ADDR || maxRomSize <= 0)
+        return;
+    // the store starts on a 64 KB block, for the erases
+    uintptr_t start = (ROM_FILE_ADDR + 0xffff) & ~(uintptr_t)0xffff;
+    uintptr_t end = ROM_FILE_ADDR + (uint32_t)maxRomSize;
+    if (end > XIP_BASE + 16 * 1024 * 1024) // the most XIP reaches
+        end = XIP_BASE + 16 * 1024 * 1024;
+    if (end <= start)
+        return;
+    sal_flash_t fl;
+    fl.base = (const uint8_t *)start;
+    fl.offset = (uint32_t)(start - XIP_BASE);
+    fl.size = (uint32_t)(end - start) & ~0xffffu;
+    fl.erase = flashErase;
+    fl.program = flashProgram;
+    fl.copying = flashCopying;
+    sal_store_open(&fl);
+    storeOpen = true;
+    printf("Flash store: %lu KB at 0x%08lx, %d slot(s)\n", (unsigned long)(fl.size / 1024), (unsigned long)start,
+           sal_store_slots());
+}
+
+// initAll()'s pre-video-init task: a set waiting to be copied is copied now.
+static void prepareFlash()
+{
+    openFlashStore();
+    int variant = 0;
+    const int set = takePendingCopy(&variant);
+    if (set < 0 || !storeOpen)
+        return;
+    char dir[48];
+    setDir(set, dir, sizeof(dir));
+    const uint64_t t0 = Frens::time_us();
+    uint8_t *temp = (uint8_t *)fbLine(0); // the display has not started
+    sal_store_copy((sal_set_id_t)set, variant, &romIo, dir, temp, FRAMEBUFFER_BYTES);
+    memset(temp, 0, FRAMEBUFFER_BYTES);
+    copiedSet = set;
+    printf("Copied %s to flash in %lu ms: %s\n", sal_sets[set].title, (unsigned long)((Frens::time_us() - t0) / 1000),
+           sal_store_variant((sal_set_id_t)set) == variant ? "ok" : "FAILED");
+}
+
+// Restarts the board to copy the set into flash; see above.
+static void __attribute__((noreturn)) copyAndRestart(int set, int variant)
+{
+    drawCopyScreen(set);
+    sleep_ms(1500); // long enough to read
+    watchdog_hw->scratch[1] = (uint32_t)set | ((uint32_t)variant << 8);
+    watchdog_hw->scratch[0] = PENDING_COPY_MAGIC;
+    // watchdog_enable(), not watchdog_reboot(0,0,0), for pico-bootLoader
+    watchdog_enable(1, false);
+    while (true)
+        tight_loop_contents();
+}
+
+// ---------------------------------------------------------------------------
+// The sets that can be played: complete on the card, or in the flash store
 // ---------------------------------------------------------------------------
 static void probeSets()
 {
@@ -518,11 +645,14 @@ static void probeSets()
             probed[s] = sal_probe((sal_set_id_t)s, &romIo, dir);
             available[s] = sal_variant_found((sal_set_id_t)s, probed[s]);
         }
+        const int stored = storeOpen ? sal_store_variant((sal_set_id_t)s) : -1;
+        if (available[s] < 0 && stored >= 0)
+            available[s] = stored; // in flash, the card not needed
         if (available[s] >= 0)
         {
             navailable++;
-            printf("%-12s %s (%s)\n", sal_sets[s].title, sal_sets[s].variant_set[available[s]],
-                   sal_sets[s].variant_name[available[s]]);
+            printf("%-12s %s (%s)%s\n", sal_sets[s].title, sal_sets[s].variant_set[available[s]],
+                   sal_sets[s].variant_name[available[s]], stored >= 0 ? ", in flash" : "");
         }
         else
         {
@@ -537,16 +667,16 @@ static void probeSets()
 static void enterChooser();
 static void waitSound();
 
-// The data of the set started last, built in PSRAM: freed before another set
-// is loaded (the machine is not running then).
-static uint8_t *psramParts[SAL_P_COUNT];
+// The data of the set started last, when built in PSRAM: freed before another
+// set is loaded (the machine is not running then).
+static const uint8_t *psramParts[SAL_P_COUNT];
 
 static void freePsramParts()
 {
     for (int p = 0; p < SAL_P_COUNT; p++)
     {
         if (psramParts[p])
-            psramFree(psramParts[p]);
+            psramFree((void *)psramParts[p]);
         psramParts[p] = nullptr;
     }
 }
@@ -556,30 +686,62 @@ static void startSet(int set)
     const int v = available[set];
     char dir[48];
     setDir(set, dir, sizeof(dir));
-    uint8_t *parts[SAL_P_COUNT];
+    const uint8_t *parts[SAL_P_COUNT];
     const uint64_t t0 = Frens::time_us();
+    const bool psram = Frens::isPsramEnabled();
     waitSound(); // the sound board is not running on core1 while it is set up
-    freePsramParts();
-    const sal_files_t got = sal_load((sal_set_id_t)set, v, &romIo, dir, psramAlloc, psramFree, parts);
-    if (got != sal_variant_files((sal_set_id_t)set, v))
+    if (psram)
     {
+        freePsramParts();
+        const sal_files_t got = sal_load((sal_set_id_t)set, v, &romIo, dir, psramAlloc, psramFree, parts);
+        if (got != sal_variant_files((sal_set_id_t)set, v))
+        {
+            for (int p = 0; p < SAL_P_COUNT; p++)
+                if (parts[p])
+                    psramFree((void *)parts[p]);
+            drawFailedScreen(set, "Its files could not be read.");
+            state = State::Failed;
+            return;
+        }
         for (int p = 0; p < SAL_P_COUNT; p++)
-            if (parts[p])
-                psramFree(parts[p]);
-        drawFailedScreen(set, "Its files could not be read.");
-        state = State::Failed;
-        return;
+            psramParts[p] = parts[p];
     }
-    for (int p = 0; p < SAL_P_COUNT; p++)
-        psramParts[p] = parts[p];
+    else
+    {
+        // from the flash store, copied there first if it is not, or holds
+        // another variant than the card
+        if (sal_store_variant((sal_set_id_t)set) != v)
+        {
+            // Copied at this boot and still not there: copying again would only
+            // restart the board over and over, wearing the flash.
+            if (set == copiedSet)
+            {
+                drawFailedScreen(set, "It could not be copied into flash.");
+                state = State::Failed;
+                return;
+            }
+            if (sdOk && sal_store_room())
+                copyAndRestart(set, v);
+            drawFailedScreen(set, "It does not fit in flash.");
+            state = State::Failed;
+            return;
+        }
+        if (!sal_store_parts((sal_set_id_t)set, parts))
+        {
+            drawFailedScreen(set, "Its copy in flash is bad.");
+            state = State::Failed;
+            return;
+        }
+    }
     arenaUsed = 0;
     sal_start((sal_set_id_t)set, v, parts, fastAlloc);
     sal_sound_reset();
     sal_render_begin();
     running = set;
     writeLastSet(set);
-    printf("Started %s (%s) in %lu ms; %lu bytes kept in SRAM\n", sal_sets[set].title, sal_sets[set].variant_set[v],
-           (unsigned long)((Frens::time_us() - t0) / 1000), (unsigned long)sal_fast_bytes());
+    printf("Started %s (%s) from %s in %lu ms; %lu bytes kept in SRAM\n", sal_sets[set].title,
+           sal_sets[set].variant_set[v], psram ? "PSRAM" : "flash", (unsigned long)((Frens::time_us() - t0) / 1000),
+           (unsigned long)sal_fast_bytes());
     sal_pads_reset(&pads);
     state = State::Game;
 }
@@ -1240,10 +1402,6 @@ static void processPerFrame()
         {
             enterSets();
         }
-        else if (state == State::NoPsram)
-        {
-            drawNoPsramScreen();
-        }
         sal_pads_reset(&pads);
         bordersValid = false; // the menu drew over the whole screen
         paceFrame(true);
@@ -1305,7 +1463,6 @@ static void processPerFrame()
         }
         break;
     case State::NoSets:
-    case State::NoPsram:
         break;
     }
 
@@ -1340,9 +1497,16 @@ int main()
     sal_init(SAL_FMT_RGB555, SAMPLERATE);
 
     // No ROM is ever selected through the browser; the sets are read below.
+    // A set waiting to be copied into flash is copied inside initAll(), before
+    // the display starts (see "The flash store").
     char dummyRom[FF_MAX_LFN];
     dummyRom[0] = 0;
+    clearRestartMark();
+    Frens::setPreVideoInitTask(prepareFlash);
     sdOk = Frens::initAll(dummyRom, SAL_CLOCKFREQ_KHZ, 0, 0, AUDIOBUFFERSIZE, false, true);
+    Frens::setPreVideoInitTask(nullptr);
+    int unused;
+    takePendingCopy(&unused); // without a card it was not taken: forget it
 
     if (sdOk)
     {
@@ -1377,17 +1541,12 @@ int main()
     soundOnCore1 = true;
     printf("Sound board on core1\n");
 
-    if (!Frens::isPsramEnabled())
-    {
-        printf("No PSRAM: the game cannot run\n");
-        state = State::NoPsram;
-        drawNoPsramScreen();
-    }
+    openFlashStore(); // without a card initAll() did not; the sets in it still play
+    probeSets();
+    if (copiedSet >= 0 && available[copiedSet] >= 0)
+        startSet(copiedSet); // just copied into flash: started straight away
     else
-    {
-        probeSets();
         enterSets();
-    }
 
     paceFrame(true);
     lastFrameUs = Frens::time_us();

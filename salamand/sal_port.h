@@ -6,7 +6,7 @@
  * So do the tables they read: SAL_RAM_DATA, the SDK's __not_in_flash (not
  * merely leaving out const: GCC puts a table that is never written in flash
  * all the same). Flash is read through the XIP cache, which the main CPU's
- * ROM (in PSRAM, behind the same cache) and core1's sound code compete for;
+ * ROM (in PSRAM or flash, behind the same cache) and core1's sound code compete for;
  * a table there misses all the time, and each miss waits for the QSPI bus.
  * The same goes for library calls (memset, memcpy, 64-bit division), which
  * live in flash: the hot paths use loops.

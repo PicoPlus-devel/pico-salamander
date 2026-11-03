@@ -168,8 +168,8 @@ sal_files_t sal_load_files(sal_set_id_t set, sal_files_t want, const sal_io_t *i
                            uint8_t *(*dest)(void *arg, int i), void *arg);
 
 /* --- The machine's data ---------------------------------------------------
- * What the machine runs from, built in memory from the ROMs (PSRAM on the
- * board, see sal_load): */
+ * What the machine runs from, built from the ROMs: in memory (PSRAM on the
+ * board, see sal_load) or in flash on a board without PSRAM (sal_store.c). */
 typedef enum
 {
     SAL_P_MAIN = 0, /* 512 KB: the 68000's ROM as 16-bit words in the host's byte order */
@@ -186,7 +186,7 @@ extern const uint32_t sal_part_size[SAL_P_COUNT];
  * parts[] and returns the mask of files found; the parts are complete only
  * when the variant's files are all in it. */
 sal_files_t sal_load(sal_set_id_t set, int v, const sal_io_t *io, const char *dir, void *(*alloc)(uint32_t),
-                     void (*free_fn)(void *), uint8_t **parts);
+                     void (*free_fn)(void *), const uint8_t **parts);
 
 /* --- Life cycle ------------------------------------------------------------ */
 
@@ -200,7 +200,7 @@ typedef void *(*sal_alloc_fn)(uint32_t size);
 
 /* Starts the machine on the parts (which must stay where they are). Returns
  * 0 when the set is not valid. */
-int sal_start(sal_set_id_t set, int variant, uint8_t *const *parts, sal_alloc_fn fast);
+int sal_start(sal_set_id_t set, int variant, const uint8_t *const *parts, sal_alloc_fn fast);
 
 /* The running set, or -1. */
 int sal_running(void);

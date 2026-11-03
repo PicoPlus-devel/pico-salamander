@@ -1,6 +1,6 @@
 # pico-salamander
 
-An emulator of the arcade games Salamander and Lifeforce (Konami, 1986) for RP2350 boards with PSRAM and HDMI output.
+An emulator of the arcade games Salamander and Lifeforce (Konami, 1986) for RP2350 boards with HDMI output.
 
 # General Info
 
@@ -9,9 +9,14 @@ An emulator of the arcade games Salamander and Lifeforce (Konami, 1986) for RP23
 [See the readme for the supported boards, the game data and the controls](https://github.com/PicoPlus-devel/pico-salamander#readme)
 
 > [!IMPORTANT]
-> An **RP2350** board with **PSRAM** and HSTX video output is required: the Adafruit Fruit Jam, a Pimoroni Pico Plus 2, the Murmulator M2 or the Adafruit Feather RP2350 with HSTX port. The Raspberry Pi Pico 2 has no PSRAM, and the original RP2040 (Pico 1) is not supported.
+> An **RP2350** board with HSTX video output is required: the Adafruit Fruit Jam, a Pimoroni Pico Plus 2 or Raspberry Pi Pico 2, the Murmulator M2 or the Adafruit Feather RP2350 with HSTX port. PSRAM is optional. The original RP2040 (Pico 1) is not supported.
 
 # Changelog
+
+## v0.2
+
+- Boards without PSRAM can now play, such as the Raspberry Pi Pico 2. The first time a game starts, it is copied into the flash memory of the board, which takes a few seconds. After that it also starts without the SD card.
+- New setting *Disable PSRAM*, for testing this on a board that has PSRAM. Saving a change restarts the board.
 
 ## v0.1
 
@@ -30,7 +35,7 @@ Initial release.
 
 The ROM set installer for Windows: [updateAll.exe](https://github.com/PicoPlus-devel/pico-salamander/releases/latest/download/updateAll.exe)
 
-Binaries for each configuration are listed below. Only RP2350-based boards with PSRAM and HSTX video output are supported.
+Binaries for each configuration are listed below. Only RP2350-based boards with HSTX video output are supported.
 
 Wiring and assembly are the same as for the NES emulator; see the [pico-infonesPlus documentation](https://github.com/PicoPlus-devel/pico-infonesPlus#setup) for the RP2350 boards listed below.
 
@@ -45,13 +50,13 @@ Wiring and assembly are the same as for the NES emulator; see the [pico-infonesP
 
 | Board | Binary |
 |:--|:--|
-| Pimoroni Pico Plus 2 | [picoSalamander_AdafruitDVISD_pico2_arm.uf2](https://github.com/PicoPlus-devel/pico-salamander/releases/latest/download/picoSalamander_AdafruitDVISD_pico2_arm.uf2) |
+| Pimoroni Pico Plus 2 or Raspberry Pi Pico 2 | [picoSalamander_AdafruitDVISD_pico2_arm.uf2](https://github.com/PicoPlus-devel/pico-salamander/releases/latest/download/picoSalamander_AdafruitDVISD_pico2_arm.uf2) |
 
 ### PicoNES PCB (PCB required)
 
 | Board | Binary |
 |:--|:--|
-| Pimoroni Pico Plus 2 | [picoSalamander_AdafruitDVISD_pico2_arm.uf2](https://github.com/PicoPlus-devel/pico-salamander/releases/latest/download/picoSalamander_AdafruitDVISD_pico2_arm.uf2) |
+| Pimoroni Pico Plus 2 or Raspberry Pi Pico 2 | [picoSalamander_AdafruitDVISD_pico2_arm.uf2](https://github.com/PicoPlus-devel/pico-salamander/releases/latest/download/picoSalamander_AdafruitDVISD_pico2_arm.uf2) |
 
 PCB: [pico_nesPCB_v2.6.zip](https://github.com/PicoPlus-devel/pico-infonesPlus/releases/latest/download/pico_nesPCB_v2.6.zip). [Readme](https://github.com/PicoPlus-devel/pico-infonesPlus#pcb-with-raspberry-pi-pico-or-pico-2-and-pimoroni-pico-plus-2)
 
@@ -67,4 +72,4 @@ PCB: [pico_nesPCB_v2.6.zip](https://github.com/PicoPlus-devel/pico-infonesPlus/r
 
 | Board | Binary |
 |:--|:--|
-| Olimex RP2040-PICO-PC with a Pimoroni Pico Plus 2 | [picoSalamander_OlimexPicoPC_arm.uf2](https://github.com/PicoPlus-devel/pico-salamander/releases/latest/download/picoSalamander_OlimexPicoPC_arm.uf2) |
+| Olimex RP2040-PICO-PC with a Pimoroni Pico Plus 2 or Raspberry Pi Pico 2 | [picoSalamander_OlimexPicoPC_arm.uf2](https://github.com/PicoPlus-devel/pico-salamander/releases/latest/download/picoSalamander_OlimexPicoPC_arm.uf2) |

@@ -25,6 +25,17 @@
  *   --layers M     draw only the characters (1) or only the sprites (2)
  *   --dumpram F    write the video RAM, character RAM, sprite RAM, scroll RAM
  *                  and palette at the end of frame F (outdir/ram_F_*.bin)
+ *   --no-psram     run as a board without PSRAM: from the flash store (needs
+ *                  --flash), the ROM loader's scratch memory limited to what
+ *                  the SRAM heap has room for. The parts in the store must
+ *                  match, byte for byte, what the loader builds in memory.
+ *   --flash FILE   the flash store, kept in FILE between runs: a set not in it
+ *                  is copied into it first, as the board does after its restart,
+ *                  and runs from it. The simulated flash checks alignment and
+ *                  only clears bits when programmed, as NOR flash does.
+ *   --flash-kb N   the size of that flash (default 2048: two sets)
+ *   --fail-read N  the ROM loader's reads fail from the Nth on, in the copy
+ *                  into flash: the copy must then leave nothing behind
  *   --hash FILE    write, per frame, a CRC32 of the main CPU's registers and
  *                  of its RAM, for comparing two builds of the core (a run
  *                  of the same set with the same input must match)
@@ -67,6 +78,7 @@
 #include "sal.h"
 #include "sal_input.h"
 #include "sal_internal.h" /* --dumpram */
+#include "sal_store.h"
 #if !SAL_HOST_REF
 #include "sal_m68k_dispatch.h"
 #include "sal_m68k_names.h"
@@ -238,9 +250,15 @@ static uint32_t host_size(void *ctx, void *f)
     return (uint32_t)n;
 }
 
+static int reads_left = -1; /* --fail-read: the reads until they fail, or -1 */
+
 static int host_read_at(void *ctx, void *f, uint32_t ofs, void *buf, uint32_t len)
 {
     (void)ctx;
+    if (reads_left == 0)
+        return -1;
+    if (reads_left > 0)
+        reads_left--;
     if (fseek((FILE *)f, ofs, SEEK_SET) != 0)
         return -1;
     return (int)fread(buf, 1, len, (FILE *)f);
@@ -252,12 +270,26 @@ static void host_close(void *ctx, void *f)
     fclose((FILE *)f);
 }
 
-/* The loader's scratch memory, counted: the board's is PSRAM. */
-static uint32_t scratch_now, scratch_peak;
+/* The loader's scratch memory, counted. On a board with PSRAM it comes from
+ * there. Without, it comes from the SRAM heap, and malloc panics when that runs
+ * out: the heap is about 62 KB (HW_CONFIG 8), of which the display's and the
+ * audio's rings take 45 KB when they start. So the copy into flash, before they
+ * do, has nearly all of it, and looking for the sets on the card, after, what is
+ * left, less the file structures (2 KB or so) that are not counted here. With
+ * --no-psram asking for more ends the harness the same way. */
+#define SCRATCH_COPY_MAX (58 * 1024)
+#define SCRATCH_PROBE_MAX (14 * 1024)
+static uint32_t scratch_now, scratch_peak, scratch_max = UINT32_MAX;
 
 static void *scratch_alloc(void *ctx, uint32_t size)
 {
     (void)ctx;
+    if (scratch_now + size > scratch_max)
+    {
+        fprintf(stderr, "loader: %u bytes of scratch memory asked with %u in use: out of memory on the board\n", size,
+                scratch_now);
+        exit(3);
+    }
     uint32_t *p = malloc(size + 8);
     p[0] = size;
     scratch_now += size;
@@ -280,6 +312,44 @@ static const sal_io_t io = {NULL,         host_list_dir, host_open,     host_siz
 static void *host_alloc(uint32_t size)
 {
     return malloc(size);
+}
+
+/* --- a simulated flash for the store ---------------------------------------- */
+
+static uint32_t FLASH_SIZE = 2048 * 1024;
+static uint8_t *flash_mem;
+static uint32_t flash_erased, flash_programmed;
+static int flash_errors;
+
+static void sim_erase(uint32_t ofs, uint32_t len)
+{
+    if ((ofs | len) % 4096 || ofs + len > FLASH_SIZE)
+    {
+        flash_errors++;
+        return;
+    }
+    memset(flash_mem + ofs, 0xff, len);
+    flash_erased += len;
+}
+
+static void sim_program(uint32_t ofs, const uint8_t *data, uint32_t len)
+{
+    if ((ofs | len) % 256 || ofs + len > FLASH_SIZE)
+    {
+        flash_errors++;
+        return;
+    }
+    for (uint32_t i = 0; i < len; i++)
+        flash_mem[ofs + i] &= data[i]; /* NOR: programming only clears bits */
+    flash_programmed += len;
+}
+
+static void sim_copying(int set)
+{
+    static int told = -1;
+    if (told != set)
+        printf("flash store: copying %s\n", sal_sets[set].title);
+    told = set;
 }
 
 /* The board's SRAM for what the core keeps there: counted, so the harness
@@ -400,8 +470,8 @@ int main(int argc, char **argv)
         npos++;
     }
     int coin_at = -1, start_at = -1, play_at = -1, live = 0, scale = 0, mute = 0;
-    int variant = -1, trace_at = -1, dumpram_at = -1;
-    const char *video_path = NULL, *wav_path = NULL, *profile_path = NULL, *hash_path = NULL;
+    int variant = -1, trace_at = -1, dumpram_at = -1, no_psram = 0, fail_read = -1;
+    const char *video_path = NULL, *wav_path = NULL, *profile_path = NULL, *hash_path = NULL, *flash_path = NULL;
     int key_at[MAX_KEYS], nkeys = 0;
     uint32_t key_mask[MAX_KEYS];
     for (; a < argc; a++)
@@ -428,6 +498,14 @@ int main(int argc, char **argv)
             profile_path = argv[++a];
         else if (!strcmp(argv[a], "--hash") && a + 1 < argc)
             hash_path = argv[++a];
+        else if (!strcmp(argv[a], "--no-psram"))
+            no_psram = 1;
+        else if (!strcmp(argv[a], "--flash") && a + 1 < argc)
+            flash_path = argv[++a];
+        else if (!strcmp(argv[a], "--flash-kb") && a + 1 < argc)
+            FLASH_SIZE = (uint32_t)atoi(argv[++a]) * 1024;
+        else if (!strcmp(argv[a], "--fail-read") && a + 1 < argc)
+            fail_read = atoi(argv[++a]);
         else if (!strcmp(argv[a], "--only") && a + 1 < argc)
         {
             a++;
@@ -491,6 +569,8 @@ int main(int argc, char **argv)
     sal_init(SAL_FMT_RGB565, SAMPLERATE);
 
     /* what is on the "card" */
+    if (no_psram)
+        scratch_max = SCRATCH_PROBE_MAX;
     char dir[1024];
     sal_files_t found[SAL_SET_COUNT];
     for (int s = 0; s < SAL_SET_COUNT; s++)
@@ -513,6 +593,9 @@ int main(int argc, char **argv)
         return 2;
     }
     const sal_set_info_t *si = &sal_sets[set];
+    if (no_psram)
+        printf("ROM loader: at most %u bytes of scratch memory looking for the sets (%u on the board)\n", scratch_peak,
+               SCRATCH_PROBE_MAX);
     if (variant < 0)
         variant = sal_variant_found((sal_set_id_t)set, found[set]);
     if (variant < 0 || variant >= si->nvariants)
@@ -527,13 +610,98 @@ int main(int argc, char **argv)
     }
 
     snprintf(dir, sizeof(dir), "%s/%s", romroot, si->folder);
-    uint8_t *parts[SAL_P_COUNT];
+    const uint8_t *parts[SAL_P_COUNT];
     double t0 = now_s();
-    const sal_files_t got = sal_load((sal_set_id_t)set, variant, &io, dir, host_alloc, free, parts);
-    if (got != sal_variant_files((sal_set_id_t)set, variant))
+    if (no_psram)
     {
-        printf("%s (%s): loading failed\n", si->title, si->variant_set[variant]);
-        return 2;
+        /* the board without PSRAM: from the flash store, copied there first
+         * when it does not hold the set (the board restarts for that) */
+        if (!flash_path)
+        {
+            fprintf(stderr, "--no-psram needs --flash FILE\n");
+            return 1;
+        }
+        flash_mem = malloc(FLASH_SIZE);
+        memset(flash_mem, 0xff, FLASH_SIZE);
+        FILE *f = fopen(flash_path, "rb");
+        if (f)
+        {
+            if (fread(flash_mem, 1, FLASH_SIZE, f) != FLASH_SIZE)
+                printf("flash store: %s is short, the rest reads erased\n", flash_path);
+            fclose(f);
+        }
+        const sal_flash_t fl = {flash_mem, 0, FLASH_SIZE, sim_erase, sim_program, sim_copying};
+        sal_store_open(&fl);
+        printf("flash store: %u KB, %d slot(s) of %u KB; Salamander %d, Lifeforce %d\n", FLASH_SIZE / 1024,
+               sal_store_slots(), sal_store_slot_size() / 1024, sal_store_variant(SAL_SET_SALAMAND),
+               sal_store_variant(SAL_SET_LIFEFRCE));
+        if (sal_store_variant((sal_set_id_t)set) != variant)
+        {
+            /* as big as the board's framebuffer, which is what it uses */
+            static uint8_t temp[CANVAS_W * CANVAS_H * 2];
+            _Static_assert(sizeof(temp) >= SAL_STORE_TEMP, "the framebuffer holds the store's copy buffer");
+            flash_erased = flash_programmed = 0;
+            scratch_max = SCRATCH_COPY_MAX;
+            scratch_peak = 0;
+            reads_left = fail_read;
+            sal_store_copy((sal_set_id_t)set, variant, &io, dir, temp, sizeof(temp));
+            reads_left = -1;
+            printf("ROM loader: at most %u bytes of scratch memory for the copy (%u on the board)\n", scratch_peak,
+                   SCRATCH_COPY_MAX);
+            const int copied = sal_store_variant((sal_set_id_t)set) == variant;
+            printf("flash store: %s, %u KB erased, %u KB programmed, %d errors, %.0f ms\n",
+                   copied ? "copied" : "COPY FAILED", flash_erased / 1024, flash_programmed / 1024, flash_errors,
+                   (now_s() - t0) * 1000);
+            /* the copy borrows the machine's state, and gives it back */
+            if (m.fmt != SAL_FMT_RGB565 || m.samplerate != SAMPLERATE || m.set != -1)
+            {
+                printf("flash store: the machine's state was not restored\n");
+                return 3;
+            }
+            if (flash_errors)
+                return 3;
+            f = fopen(flash_path, "wb");
+            if (f)
+            {
+                fwrite(flash_mem, 1, FLASH_SIZE, f);
+                fclose(f);
+            }
+            if (!copied)
+            {
+                printf("%s: no copy in the flash store\n", si->title);
+                return fail_read >= 0 ? 4 : 2;
+            }
+        }
+        if (!sal_store_parts((sal_set_id_t)set, parts))
+        {
+            printf("%s: not in the flash store\n", si->title);
+            return 2;
+        }
+        /* what the store holds is what the loader builds in memory */
+        const uint8_t *built[SAL_P_COUNT];
+        scratch_max = UINT32_MAX;
+        if (sal_load((sal_set_id_t)set, variant, &io, dir, host_alloc, free, built) !=
+            sal_variant_files((sal_set_id_t)set, variant))
+        {
+            printf("%s (%s): loading failed\n", si->title, si->variant_set[variant]);
+            return 2;
+        }
+        for (int p = 0; p < SAL_P_COUNT; p++)
+            if (memcmp(parts[p], built[p], sal_part_size[p]))
+            {
+                printf("flash store: part %d differs from what the loader builds\n", p);
+                return 3;
+            }
+        printf("flash store: the parts match what the loader builds\n");
+    }
+    else
+    {
+        const sal_files_t got = sal_load((sal_set_id_t)set, variant, &io, dir, host_alloc, free, parts);
+        if (got != sal_variant_files((sal_set_id_t)set, variant))
+        {
+            printf("%s (%s): loading failed\n", si->title, si->variant_set[variant]);
+            return 2;
+        }
     }
     const double t_load = now_s() - t0;
     t0 = now_s();
@@ -545,7 +713,8 @@ int main(int argc, char **argv)
     printf("%s (%s, %s): loaded in %.0f ms, started in %.1f ms; %u bytes kept in SRAM\n", si->title,
            si->variant_set[variant], si->variant_name[variant], t_load * 1000, (now_s() - t0) * 1000,
            sal_fast_bytes());
-    printf("ROM loader: at most %u bytes of scratch memory\n", scratch_peak);
+    if (!no_psram)
+        printf("ROM loader: at most %u bytes of scratch memory\n", scratch_peak);
     (void)fast_total;
     profiling = profile_path != NULL;
 

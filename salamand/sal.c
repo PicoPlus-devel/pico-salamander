@@ -231,7 +231,7 @@ static uint8_t *load_dest(void *arg, int i)
 }
 
 sal_files_t sal_load(sal_set_id_t set, int v, const sal_io_t *io, const char *dir, void *(*alloc)(uint32_t),
-                     void (*free_fn)(void *), uint8_t **parts)
+                     void (*free_fn)(void *), const uint8_t **parts)
 {
     const sal_set_info_t *s = &sal_sets[set];
     load_t l;
@@ -245,10 +245,12 @@ sal_files_t sal_load(sal_set_id_t set, int v, const sal_io_t *io, const char *di
     const sal_files_t got = sal_load_files(set, want, io, dir, load_dest, &l);
     if (got == want)
     {
+        uint8_t *built[SAL_P_COUNT];
         for (int p = 0; p < SAL_P_COUNT; p++)
         {
-            parts[p] = (uint8_t *)alloc(sal_part_size[p]);
-            memset(parts[p], 0, sal_part_size[p]);
+            built[p] = (uint8_t *)alloc(sal_part_size[p]);
+            memset(built[p], 0, sal_part_size[p]);
+            parts[p] = built[p];
         }
         for (int i = 0; i < s->nfiles; i++)
         {
@@ -260,14 +262,14 @@ sal_files_t sal_load(sal_set_id_t set, int v, const sal_io_t *io, const char *di
             {
                 /* the 68000's words in the host's byte order: byte A of the
                  * CPU's ROM is byte A ^ 1 of the part */
-                uint8_t *img = parts[SAL_P_MAIN];
+                uint8_t *img = built[SAL_P_MAIN];
                 for (uint32_t k = 0; k < f->size; k++)
                     img[(f->offset + k * f->skip) ^ 1] = src[k];
             }
             else
             {
                 const int p = f->region == SAL_R_SOUND ? SAL_P_SOUND : f->region == SAL_R_VLM ? SAL_P_VLM : SAL_P_PCM;
-                memcpy(parts[p] + f->offset, src, f->size);
+                memcpy(built[p] + f->offset, src, f->size);
             }
         }
     }
@@ -290,7 +292,7 @@ void sal_init(sal_fmt_t fmt, int samplerate)
         sal_fetch_page[p] = zero_page;
 }
 
-int sal_start(sal_set_id_t set, int variant, uint8_t *const *parts, sal_alloc_fn fast)
+int sal_start(sal_set_id_t set, int variant, const uint8_t *const *parts, sal_alloc_fn fast)
 {
     if (set < 0 || set >= SAL_SET_COUNT || variant < 0 || variant >= sal_sets[set].nvariants)
         return 0;

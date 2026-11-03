@@ -4,8 +4,8 @@
 # Builds picoSalamander for every supported hardware configuration, in Release.
 # Binaries are copied to the releases folder.
 #
-# RP2350 with HSTX video output only (the board runs at 384 MHz, and the game's
-# data needs PSRAM): configurations 2, 8, 13, 14 and 15, as pico-outrun.
+# RP2350 with HSTX video output only (the board runs at 384 MHz): configurations
+# 2, 8, 13, 14 and 15, as pico-outrun.
 # ====================================================================================
 cd `dirname $0` || exit 1
 [ -d releases ] && rm -rf releases
