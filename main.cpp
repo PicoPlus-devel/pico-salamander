@@ -1321,6 +1321,26 @@ static void __noinline __not_in_flash_func(presentFrame)()
     {
         char s[3] = {(char)('0' + (fps / 10) % 10), (char)('0' + fps % 10), 0};
         screenText(1, 1, s, rgb(255, 255, 255), rgb(0, 0, 0)); // in the left border
+
+        // Below it, "R" and the HSTX auto-resyncs since boot, so a display
+        // glitch shows, as in the other emulators. It must stay in the border:
+        // text over the picture is drawn after the beam has passed and is
+        // overwritten by the next frame's band before it shows. The border is
+        // four cells wide, so the count moves to column 0 at 100 and stops at
+        // 999; the serial log gives the exact total with each resync.
+        int n = get_video_output_resync_count();
+        if (n > 999)
+            n = 999;
+        char r[5];
+        int len = 0;
+        r[len++] = 'R';
+        if (n >= 100)
+            r[len++] = (char)('0' + n / 100);
+        if (n >= 10)
+            r[len++] = (char)('0' + (n / 10) % 10);
+        r[len++] = (char)('0' + n % 10);
+        r[len] = 0;
+        screenText(len > 3 ? 0 : 1, 2, r, rgb(255, 255, 255), rgb(0, 0, 0));
     }
     lastDrawUs = (uint32_t)(Frens::time_us() - t0);
 }
