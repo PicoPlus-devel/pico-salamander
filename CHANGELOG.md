@@ -16,6 +16,9 @@ An emulator of the arcade games Salamander and Lifeforce (Konami, 1986) for RP23
 ## v0.3
 
 - The DIP switches can now be changed in the settings menu: coins per credit, lives, difficulty, demo sounds and more. The game's own test screens are there too, as *Service mode*. Saving a change restarts the game.
+- NES and SNES controllers on the controller ports are now read with the same timing as a real console, on all boards. Thanks to @javavi.
+- Under pico-bootLoader, the settings menu entry that goes back to the bootloader is now called **Return to boot loader**.
+- Fixed: on boards with HSTX video, with *Display Mode* set to DVI, the picture could randomly drop out, and now and then a single line was shown shifted to the right for one frame.
 
 ## v0.2
 
