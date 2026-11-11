@@ -169,7 +169,7 @@ Gavin Knight ([DynaMight1124](https://github.com/DynaMight1124)) designed an NES
 The SD card holds the ROM sets and the settings, and is required. On a board without PSRAM, a game already copied into flash also starts without it, and its settings are then not remembered.
 
 1. **The ROM sets.** Format the card as FAT32 (recommended) or exFAT and copy the sets into `/roms/arcade/SALAMAND` and `/roms/arcade/LIFEFRCE`; see [Game data](#game-data). The folders are created automatically on first start.
-2. **Settings.** Screen mode, audio output and the other options of the settings menu are stored in `/settings_ARC.dat` in the root of the card and are remembered across restarts. The file is shared by all arcade games of this family. The game chosen last is kept in `/roms/arcade/SALAMAND/LASTSET.TXT`, and the DIP switches of each game in `DIPS.TXT` in its folder.
+2. **Settings.** Screen mode, audio output and the other options of the settings menu are stored in `/settings_ARC.dat` in the root of the card and are remembered across restarts. The file is shared by all arcade games of this family. The game chosen last is kept in `/SAVES/SALAMANDER/LASTSET.TXT`, and the DIP switches of each game in `/SAVES/SALAMANDER/SALAMAND.DIP` and `/SAVES/SALAMANDER/LIFEFRCE.DIP`.
 
 There are no save files: the game has no save states, and high scores are not written to the card.
 
@@ -239,7 +239,7 @@ Entries that the sister projects offer are absent here because they have nothing
 
 ### DIP switches
 
-While a game is running, the settings menu also lists the DIP switches of that game. Saving a changed switch restarts the game, so the current game and the high score are lost. **CANCEL** leaves the game running. **DEFAULT** selects MAME's defaults, which take effect when saved. The choices are kept per game and version.
+While a game is running, the settings menu also lists the DIP switches of that game. Saving a changed switch restarts the game, so the current game and the high score are lost. **CANCEL** leaves the game running. **DEFAULT** selects MAME's defaults, which take effect when saved. The choices are kept per game and version, in `/SAVES/SALAMANDER` on the SD card.
 
 | Setting | Salamander, Lifeforce (US) | Lifeforce (Japan) |
 | --- | --- | --- |

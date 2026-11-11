@@ -69,7 +69,8 @@
 #define SAMPLES_PER_FRAME (SAMPLERATE / 60) // 735
 
 #define ROMROOT "/roms/arcade"
-#define LASTSET_FILE ROMROOT "/SALAMAND/LASTSET.TXT"
+#define SAVEDIR GAMESAVEDIR "/SALAMANDER" // the game chosen last and the DIP switches
+#define LASTSET_FILE SAVEDIR "/LASTSET.TXT"
 
 // 1: print the time spent per part of a frame over the serial console every
 // 5 seconds. For measuring a board.
@@ -371,6 +372,8 @@ static void writeLastSet(int set)
 {
     if (!sdOk || readLastSet() == set)
         return;
+    f_mkdir(GAMESAVEDIR);
+    f_mkdir(SAVEDIR);
     FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
     const char c = (char)('0' + set);
     UINT bw = 0;
@@ -664,11 +667,15 @@ static void probeSets()
 
 // ---------------------------------------------------------------------------
 // The DIP switches: rows of the settings menu while a set runs
-// (menuSetEmulatorOptions in menu.h), kept in a file in the set's folder with
-// a line per variant, "salamandj=ff 42 e0": DSW0, DSW1 and IN0, in hex. Saving
-// a change restarts the game, which then sees the switches from its start.
+// (menuSetEmulatorOptions in menu.h), kept in a file per set,
+// GAMESAVEDIR/SALAMANDER/<folder>.DIP, with a line per variant,
+// "salamandj=ff 42 e0": DSW0, DSW1 and IN0, in hex. Saving a change restarts
+// the game, which then sees the switches from its start.
 // ---------------------------------------------------------------------------
-#define DIPS_FILE "DIPS.TXT"
+static void dipPath(char *buf, size_t n, int set)
+{
+    snprintf(buf, n, SAVEDIR "/%s.DIP", sal_sets[set].folder);
+}
 
 static const sal_dip_t *dips = nullptr;
 static int ndips = 0;
@@ -682,7 +689,7 @@ static void readDipFile(int set, uint8_t ports[][SAL_DIP_PORTS], bool *have)
     if (!sdOk)
         return;
     char path[48];
-    snprintf(path, sizeof(path), ROMROOT "/%s/" DIPS_FILE, sal_sets[set].folder);
+    dipPath(path, sizeof(path), set);
     char text[SAL_MAX_VARIANTS * 24];
     UINT n = 0;
     FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
@@ -737,7 +744,9 @@ static void saveDips()
     have[available[running]] = true;
 
     char path[48];
-    snprintf(path, sizeof(path), ROMROOT "/%s/" DIPS_FILE, si->folder);
+    dipPath(path, sizeof(path), running);
+    f_mkdir(GAMESAVEDIR);
+    f_mkdir(SAVEDIR);
     FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
     if (fil && f_open(fil, path, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
     {
