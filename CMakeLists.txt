@@ -41,7 +41,7 @@ if(PICO_PLATFORM STREQUAL "rp2040")
 endif()
 if(GPIOHSTXD0 EQUAL 0)
     message(FATAL_ERROR
-        "picoSalamander needs a board with HSTX video output (HW_CONFIG 2, 5, 8, 13, 14 or 15).")
+        "picoSalamander needs a board with HSTX video output (HW_CONFIG 2, 5, 8, 13, 14, 15, 17 or 18).")
 endif()
 
 add_definitions(-DNDEBUG)
@@ -265,7 +265,6 @@ if(DEFINED PICO_DEFAULT_UART_TX_PIN)
     message(STATUS "Using PICO_DEFAULT_UART_TX_PIN: ${PICO_DEFAULT_UART_TX_PIN}")
     target_compile_definitions(${projectname} PRIVATE
         PICO_DEFAULT_UART_TX_PIN=${PICO_DEFAULT_UART_TX_PIN}
-        PICO_DEFAULT_UART=0
     )
 endif()
 if(DEFINED PICO_DEFAULT_UART_RX_PIN)

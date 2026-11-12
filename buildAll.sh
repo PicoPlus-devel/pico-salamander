@@ -5,7 +5,7 @@
 # Binaries are copied to the releases folder.
 #
 # RP2350 with HSTX video output only (the board runs at 384 MHz): configurations
-# 2, 8, 13, 14 and 15, as pico-outrun.
+# 2, 8, 13, 14, 15, 17 and 18, as pico-outrun.
 # ====================================================================================
 cd `dirname $0` || exit 1
 [ -d releases ] && rm -rf releases
@@ -17,7 +17,7 @@ then
 	echo "Please install picotool from https://github.com/raspberrypi/picotool.git"
 	exit 1
 fi
-HWCONFIGS="2 8 13 14 15"
+HWCONFIGS="2 8 13 14 15 17 18"
 for HWCONFIG in $HWCONFIGS
 do
 	./bld.sh -c $HWCONFIG -2 || exit 1
