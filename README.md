@@ -2,7 +2,7 @@
 
 **pico-salamander** is an emulator of the arcade games **Salamander** and **Lifeforce** (Konami, 1986) for RP2350-based microcontroller boards, with video and audio over HDMI. It emulates the original board (Konami GX587): the 68000 main CPU, its two scrolling layers of characters, its zoomable sprites and its palette, and the sound board with its Z80, the Yamaha YM2151 FM chip, the Konami K007232 PCM chip and the Sanyo VLM5030 speech chip. The emulation is based on the nemesis driver of [MAME](https://www.mamedev.org/), the 68000 core [Musashi](https://github.com/kstenerud/Musashi) and MAME's Z80, YM2151, K007232 and VLM5030 emulations.
 
-It runs on the [Adafruit Fruit Jam](https://www.adafruit.com/product/6200), the [Pimoroni Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2?variant=42092668289107) or [Raspberry Pi Pico 2](https://www.adafruit.com/product/6006) with the Adafruit DVI breakout, the [Murmulator M2](https://murmulator.ru), the [Adafruit Feather RP2350 with HSTX Port](https://www.adafruit.com/product/6130) and the [Olimex RP2040-PICO-PC](https://www.olimex.com/Products/MicroPython/PICO/RP2040-PICO-PC/) with a Pimoroni Pico Plus 2 or Raspberry Pi Pico 2; see [Supported hardware](#supported-hardware).
+It runs on the [Adafruit Fruit Jam](https://www.adafruit.com/product/6200), the [Pimoroni Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2?variant=42092668289107) or [Raspberry Pi Pico 2](https://www.adafruit.com/product/6006) with the Adafruit DVI breakout, the [Murmulator M2](https://murmulator.ru), the [Adafruit Feather RP2350 with HSTX Port](https://www.adafruit.com/product/6130), the [Olimex RP2040-PICO-PC](https://www.olimex.com/Products/MicroPython/PICO/RP2040-PICO-PC/) with a Pimoroni Pico Plus 2 or Raspberry Pi Pico 2, the [Pico Computer 3](https://github.com/UKTailwind/Pico-Computer-3), and the [PCB for the Waveshare RP2350-PiZero](https://github.com/PicoPlus-devel/pico-infonesPlus#pcb-with-waveshare-rp2350-pizero); see [Supported hardware](#supported-hardware).
 
 It uses the same menu, display, audio and controller framework as this family of emulators:
 
@@ -71,7 +71,7 @@ The games as the emulator draws them. The pictures were captured with the [host 
 Worth knowing before you start:
 
 - **No save states, and high scores are not kept.** A high score survives until the board is reset or powered off.
-- **The DIP switches are fixed** at MAME's defaults: 1 coin for 1 credit, 3 lives, normal difficulty, demo sounds on, upright cabinet. There is no menu for them, and the flipped picture of a cocktail cabinet is not emulated.
+- **The DIP switches start at MAME's defaults**: 1 coin for 1 credit, 3 lives, normal difficulty, demo sounds on, upright cabinet. They can be changed in the settings menu; see [DIP switches](#dip-switches). The flip screen and cabinet switches are not offered, because the flipped picture of a cocktail cabinet is not emulated.
 - Development and testing take place on the Adafruit Fruit Jam. The other supported boards are built by the release workflow but need more testing. Running without PSRAM has been tested on a plain Raspberry Pi Pico 2 (HW_CONFIG 2) and on the Fruit Jam with the *Disable PSRAM* setting.
 
 ***
@@ -115,7 +115,7 @@ When no set is complete, the board shows a screen that names the missing files. 
 
 ## Supported hardware
 
-An RP2350 board is required, and video must run over HSTX. PSRAM is optional; see [Boards without PSRAM](#game-data). Only the five hardware configurations below are supported; the build stops with an error for RP2040 boards and for the configurations that use the bit-banged PicoDVI driver.
+An RP2350 board is required, and video must run over HSTX. PSRAM is optional; see [Boards without PSRAM](#game-data). Only the seven hardware configurations below are supported; the build stops with an error for RP2040 boards and for the configurations that use the bit-banged PicoDVI driver.
 
 | HW_CONFIG | Hardware | Binary |
 | --- | --- | --- |
@@ -124,6 +124,8 @@ An RP2350 board is required, and video must run over HSTX. PSRAM is optional; se
 | 13 | [Murmulator M2](https://murmulator.ru) | `picoSalamander_MurmulatorM2_arm.uf2` |
 | 14 | [Adafruit Feather RP2350 with HSTX Port](https://www.adafruit.com/product/6130) with TLV320DAC3100 I2S DAC and microSD breakout | `picoSalamander_AdafruitFeatherRP2350_TLV320DAC3100_arm_piousb.uf2` |
 | 15 | [Olimex RP2040-PICO-PC](https://www.olimex.com/Products/MicroPython/PICO/RP2040-PICO-PC/) with a Pimoroni Pico Plus 2 or another Pico 2 compatible board | `picoSalamander_OlimexPicoPC_arm.uf2` |
+| 17 | [Pico Computer 3](https://github.com/UKTailwind/Pico-Computer-3) | `picoSalamander_PicoComputer3_arm.uf2` |
+| 18 | [PCB for the Waveshare RP2350-PiZero](https://github.com/PicoPlus-devel/pico-infonesPlus#pcb-with-waveshare-rp2350-pizero) | `picoSalamander_WaveShareRP2350PiZeroLiuPCB_arm_piousb.uf2` |
 
 Notes per configuration:
 
@@ -131,7 +133,9 @@ Notes per configuration:
 - **HW_CONFIG 8**: no additional hardware is required apart from one or two USB game controllers. Button 2 switches the NeoPixel VU meter on and off.
 - **HW_CONFIG 14**: the Feather RP2350 is sold in two variants: [with 8 MB PSRAM onboard](https://www.adafruit.com/product/6130) and [without PSRAM](https://www.adafruit.com/product/6000). The variant without PSRAM runs the game from flash, or uses a PSRAM chip when one is soldered onto the board.
 - **HW_CONFIG 15**: a standard Raspberry Pi Pico 2 runs the game from flash. A board with 8 MB of PSRAM uses it, with its chip select on GPIO 8 or GPIO 47. A NES or SNES controller can be connected to the UEXT connector: clock on GPIO 5, latch on GPIO 9 and data on GPIO 20. There is only one controller port and no Wii Classic controller support. Support for this board was contributed by [DnCraptor](https://github.com/DnCraptor).
-- **Audio** is sent over HDMI by default. Configurations 8, 13 and 14 also have an I2S audio output, selected with *External Audio* in the settings menu; on the Fruit Jam, plugging in headphones selects it automatically. Configuration 2 has HDMI audio only. Configuration 15 plays the sound through HDMI and the board's audio jack at the same time.
+- **HW_CONFIG 17**: the Pico Computer 3 has 8 MB of PSRAM on the board. Up to two NES or SNES controllers and a Wii Classic controller connect to its I/O header H4; the pins are listed under [Pico Computer 3](https://github.com/PicoPlus-devel/pico-infonesPlus#pico-computer-3) in the pico-infonesPlus readme. The pin assignment may still change. Support for this board was contributed by [javavi](https://github.com/javavi).
+- **HW_CONFIG 18**: a PCB for the [Waveshare RP2350-PiZero](https://www.waveshare.com/rp2350-pizero.htm), designed by Liu Szuping ([szuping](https://github.com/szuping)); the PCB design is not yet available. Without PSRAM the game runs from flash. PSRAM is optional and has to be soldered onto the RP2350-PiZero; a board that combines it with a non-Winbond flash chip needs the [flash_config fix](https://github.com/PicoPlus-devel/pico-infonesPlus#psram-with-a-non-winbond-flash-chip) first. Video goes through the HDMI port of the PCB, not the mini HDMI port of the RP2350-PiZero. A USB controller connects to the PIO-USB port of the RP2350-PiZero, and up to two NES or SNES controllers to the controller ports of the PCB. With an ESP32 module running [BlueRetro](https://github.com/darthcloud/blueretro) in the socket of the PCB, Bluetooth controllers are used instead of the controller ports; remove the module to use the ports. See [PCB with Waveshare RP2350-PiZero](https://github.com/PicoPlus-devel/pico-infonesPlus#pcb-with-waveshare-rp2350-pizero) in the pico-infonesPlus readme.
+- **Audio** is sent over HDMI by default. Configurations 8, 13, 14, 17 and 18 also have an I2S audio output, selected with *External Audio* in the settings menu; on the Fruit Jam, plugging in headphones selects it automatically. Configuration 2 has HDMI audio only. Configuration 15 plays the sound through HDMI and the board's audio jack at the same time.
 
 For wiring and assembly instructions, see the setup sections of the [pico-infonesPlus README](https://github.com/PicoPlus-devel/pico-infonesPlus#setup); for the PCB version of HW_CONFIG 2, see [PicoNES PCB](#picones-pcb) below. Flashing works the same for every board: hold BOOTSEL while connecting the board over USB, then copy the `.uf2` file onto the USB drive that appears.
 
@@ -139,7 +143,7 @@ For wiring and assembly instructions, see the setup sections of the [pico-infone
 
 ## Overclocking
 
-All five configurations run at **384 MHz at 1.35 V**, as pico-outrun does. The clock is fixed: the sister projects offer an *Overclock* setting in their menus, but here the entry is not shown. The main CPU and the drawing run on the first core; the second core feeds the display and runs the sound board (the Z80 and the three sound chips) in between. When a frame takes longer than the display allows, the next picture is not drawn, so the game and its sound keep their speed.
+All seven configurations run at **384 MHz at 1.35 V**, as pico-outrun does. The clock is fixed: the sister projects offer an *Overclock* setting in their menus, but here the entry is not shown. The main CPU and the drawing run on the first core; the second core feeds the display and runs the sound board (the Z80 and the three sound chips) in between. When a frame takes longer than the display allows, the next picture is not drawn, so the game and its sound keep their speed.
 
 That clock is also why the board configurations driven by the bit-banged PicoDVI driver are not supported. There the system clock is tied to the pixel clock and cannot exceed 324 MHz, and without the HSTX driver's background task the sound board would have to run on the first core as well. The build refuses those configurations, and `./bld.sh -D`, which forces the PicoDVI driver on an HSTX-capable board, is refused in the same way.
 
@@ -169,7 +173,7 @@ Gavin Knight ([DynaMight1124](https://github.com/DynaMight1124)) designed an NES
 The SD card holds the ROM sets and the settings, and is required. On a board without PSRAM, a game already copied into flash also starts without it, and its settings are then not remembered.
 
 1. **The ROM sets.** Format the card as FAT32 (recommended) or exFAT and copy the sets into `/roms/arcade/SALAMAND` and `/roms/arcade/LIFEFRCE`; see [Game data](#game-data). The folders are created automatically on first start.
-2. **Settings.** Screen mode, audio output and the other options of the settings menu are stored in `/settings_ARC.dat` in the root of the card and are remembered across restarts. The file is shared by all arcade games of this family. The game chosen last is kept in `/roms/arcade/SALAMAND/LASTSET.TXT`.
+2. **Settings.** Screen mode, audio output and the other options of the settings menu are stored in `/settings_ARC.dat` in the root of the card and are remembered across restarts. The file is shared by all arcade games of this family. The game chosen last is kept in `/SAVES/SALAMANDER/LASTSET.TXT`, and the DIP switches of each game in `/SAVES/SALAMANDER/SALAMAND.DIP` and `/SAVES/SALAMANDER/LIFEFRCE.DIP`.
 
 There are no save files: the game has no save states, and high scores are not written to the card.
 
@@ -229,13 +233,30 @@ Salamander has an eight-way joystick and two buttons for each player: the power-
 
 A coin is inserted when SELECT is released, and only when no other button was pressed while it was held, so opening the settings menu does not insert a coin. Each controller's SELECT feeds its own coin slot: a two player game is started with a credit from each controller (or two from the first) and START on the second controller. While START is held, A switches the frame rate display (top left, in the border) on or off instead of shooting; the same setting is also in the settings menu. A has a rapid fire setting.
 
-**SELECT + START** opens the settings menu while the game keeps its state; leaving the menu returns to where you were. It offers the screen mode (with or without scanlines) and the scanline type, the frame rate display, audio on/off, rapid fire on A, the external audio output on boards that have one, the volume and the NeoPixel VU meter on the Fruit Jam, *Reset Game*, the controller test screen, [USB drive mode](#usb-drive-mode), BOOTSEL mode, the overscan fix for the menus and, on boards with PSRAM, *Disable PSRAM*. With both games on the card it also offers *Quit game*, which returns to the menu that chooses the game, and when started from pico-bootLoader *Return to emulator selection menu*. Settings are remembered on the SD card. In the settings menu, press SELECT on any setting to jump straight to the SAVE/CANCEL/DEFAULT row. Changes are only applied when **SAVE** is selected.
+**SELECT + START** opens the settings menu while the game keeps its state; leaving the menu returns to where you were. It offers the screen mode (with or without scanlines) and the scanline type, the frame rate display, audio on/off, rapid fire on A, the external audio output on boards that have one, the volume and the NeoPixel VU meter on the Fruit Jam, *Reset Game*, the controller test screen, [USB drive mode](#usb-drive-mode), BOOTSEL mode, the overscan fix for the menus, the [DIP switches](#dip-switches) of the running game and, on boards with PSRAM, *Disable PSRAM*. With both games on the card it also offers *Quit game*, which returns to the menu that chooses the game, and when started from pico-bootLoader *Return to boot loader*. Settings are remembered on the SD card. In the settings menu, press SELECT on any setting to jump straight to the SAVE/CANCEL/DEFAULT row. Changes are only applied when **SAVE** is selected.
 
 **Overscan fix in menu** is meant for TVs that cut off the edges of the picture: **Rows** leaves the top and bottom text rows of the settings menu blank, **Rows & columns** also leaves the first and last columns blank. It applies to the settings menu only, not to the game picture.
 
 **Disable PSRAM** is a testing aid: set to **YES** and saved, it restarts the board, which then runs as a board without PSRAM, from a copy in flash; see [Boards without PSRAM](#game-data). Setting it to **NO** and saving returns to PSRAM. The setting is stored in the flash of the board, not on the SD card, and a firmware update can reset it to **NO**.
 
 Entries that the sister projects offer are absent here because they have nothing to act on: there are no save states, no frame skip setting and no *Overclock* setting, since the clock is fixed; see [Overclocking](#overclocking).
+
+### DIP switches
+
+While a game is running, the settings menu also lists the DIP switches of that game. Saving a changed switch restarts the game, so the current game and the high score are lost. **CANCEL** leaves the game running. **DEFAULT** selects MAME's defaults, which take effect when saved. The choices are kept per game and version, in `/SAVES/SALAMANDER` on the SD card.
+
+| Setting | Salamander, Lifeforce (US) | Lifeforce (Japan) |
+| --- | --- | --- |
+| Coins per credit | *Coinage* | *Coin A* and *Coin B*, one for each coin slot |
+| Lives | 2, 3, 5, 7 | 3, 4, 5, 6 |
+| Coin slots | 1, 2 | 1, 2 |
+| Max credits | 1, 3, 5, 9 | Not available |
+| Bonus life | Not available | 70k and every 200k, 100k and every 300k, 70k only, 100k only |
+| Difficulty | Easy, Normal, Hard, Hardest | Easy, Normal, Hard, Hardest |
+| Demo sounds | Off, On | Off, On |
+| Service mode | Off, On | Off, On |
+
+With *Service mode* on, the game starts in its own test screens instead of the game. Press START to move past the color test. Turn it off in the settings menu to play again. The setting that disables the coin slots is not offered, because no game could then be started.
 
 ***
 
@@ -269,7 +290,7 @@ The emulated board in `salamand/` is plain C without Pico dependencies, and also
 - 68000 CPU core: Musashi, by Karl Stenerud; MIT licence.
 - YM2151 emulation: MAME's `ym2151.cpp` (MAME 0.229), by Jarek Burczynski and Ernesto Corvi; GPL-2.0-or-later.
 - See [salamand/LICENSE](salamand/LICENSE) for which file comes from where.
-- The menu, HDMI driver, PSRAM allocator, SD card and controller code in pico_shared are shared with the sister projects. HSTX video driver and I2S audio: [@fliperama86](https://github.com/fliperama86) and [@frenskefrens](https://github.com/fhoedemakers). (S)NES and Wii controller support: [@PaintYourDragon](https://github.com/PaintYourDragon) and [Adafruit](https://www.adafruit.com). Olimex RP2040-PICO-PC support, including sound through its audio jack: [DnCraptor](https://github.com/DnCraptor).
+- The menu, HDMI driver, PSRAM allocator, SD card and controller code in pico_shared are shared with the sister projects. HSTX video driver and I2S audio: [@fliperama86](https://github.com/fliperama86) and [@frenskefrens](https://github.com/fhoedemakers). (S)NES and Wii controller support: [@PaintYourDragon](https://github.com/PaintYourDragon) and [Adafruit](https://www.adafruit.com). Olimex RP2040-PICO-PC support, including sound through its audio jack: [DnCraptor](https://github.com/DnCraptor). Pico Computer 3 support: [javavi](https://github.com/javavi).
 - The [PicoNES PCB](#picones-pcb) was designed by **John Edgar Park** ([@johnedgarpark](https://twitter.com/johnedgarpark)); the 3D-printed case for it by [DynaMight1124](https://github.com/DynaMight1124).
 - The ROM loader, the drawing in bands, the sound board a frame behind on the second core and the host harness follow pico-1943 and pico-galagino.
 - The research of [Liu Szuping](https://github.com/szuping) for an earlier RP2350 port of Salamander (hardware notes, timing measurements and a profile of the game) served as a reference.

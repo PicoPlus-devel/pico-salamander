@@ -12,6 +12,8 @@ python3 hosttest/ppm2png.py hosttest/out/frame_02400.ppm
 
 `sal_host` reads the sets from a folder laid out as the SD card (`SALAMAND`, `LIFEFRCE`) through the same loader as the firmware, runs the given number of frames with scripted input, writes every Nth frame as a 320 x 240 PPM and the sound as a stereo WAV file. Every second it reports the time per frame of the main CPU, the sound board and the drawing, and what the machine did (the program counters, the sound latch writes and interrupts, the sprites drawn). `--layers` draws only the characters or only the sprites, `--dumpram` writes the video RAM of a frame to files, and `--only` plays one sound chip at a time.
 
+`--dsw0 N` and `--dsw1 N` set the DIP switches instead of the set's defaults, and `--service` turns the service switch on.
+
 `--no-psram --flash FILE` runs the game from a simulated flash copy, as a board without PSRAM does, and limits the ROM loader's scratch memory to what the SRAM heap of such a board has room for. It also checks that the copy matches, byte for byte, what the loader builds in memory. `--flash-kb` sets the size of the flash, and `--fail-read N` makes the loader's reads fail from the Nth on during the copy, which must then leave nothing behind.
 
 `ym_test` keys one note on the YM2151 port and prints the output's level and pitch; `zex_host` runs the ZEXDOC and ZEXALL instruction exercisers on the Z80 core (the test programs are not part of this repository).

@@ -128,9 +128,8 @@ unsigned SAL_HOT(sal_m68k_read16_slow)(unsigned a)
             return m.dsw0;
         case 0x2000:
         {
-            /* b5 flip screen (DIP, off), b6 unused, b7 service (DIP, off):
-             * active low */
-            unsigned v = 0xe0;
+            /* b5 flip screen (DIP), b6 unused, b7 service (DIP): active low */
+            unsigned v = m.in0_dips;
             if (m.inputs & SAL_IN_COIN1)
                 v |= 0x01;
             if (m.inputs & SAL_IN_COIN2)
@@ -333,8 +332,9 @@ int sal_start(sal_set_id_t set, int variant, const uint8_t *const *parts, sal_al
     }
 #endif
 
-    m.dsw0 = sal_sets[set].dsw0[variant];
-    m.dsw1 = sal_sets[set].dsw1[variant];
+    uint8_t dips[SAL_DIP_PORTS];
+    sal_dip_defaults(set, variant, dips);
+    sal_set_dips(dips);
     m.set = set;
     m.variant = variant;
 
@@ -365,6 +365,13 @@ const sal_stats_t *sal_stats(void)
 {
     m.stats.main_pc = m68k_get_reg(NULL, M68K_REG_PC);
     return &m.stats;
+}
+
+void sal_set_dips(const uint8_t *ports)
+{
+    m.dsw0 = ports[SAL_DIP_DSW0];
+    m.dsw1 = ports[SAL_DIP_DSW1];
+    m.in0_dips = ports[SAL_DIP_IN0];
 }
 
 void sal_reset(void)

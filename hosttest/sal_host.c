@@ -36,6 +36,9 @@
  *   --flash-kb N   the size of that flash (default 2048: two sets)
  *   --fail-read N  the ROM loader's reads fail from the Nth on, in the copy
  *                  into flash: the copy must then leave nothing behind
+ *   --dsw0 N       the DIP switches of DSW0, instead of the set's default
+ *   --dsw1 N       the same for DSW1 (N in decimal or 0x hex)
+ *   --service      the service switch on: the game's test screens
  *   --hash FILE    write, per frame, a CRC32 of the main CPU's registers and
  *                  of its RAM, for comparing two builds of the core (a run
  *                  of the same set with the same input must match)
@@ -471,6 +474,7 @@ int main(int argc, char **argv)
     }
     int coin_at = -1, start_at = -1, play_at = -1, live = 0, scale = 0, mute = 0;
     int variant = -1, trace_at = -1, dumpram_at = -1, no_psram = 0, fail_read = -1;
+    int dsw0 = -1, dsw1 = -1, service = 0;
     const char *video_path = NULL, *wav_path = NULL, *profile_path = NULL, *hash_path = NULL, *flash_path = NULL;
     int key_at[MAX_KEYS], nkeys = 0;
     uint32_t key_mask[MAX_KEYS];
@@ -496,6 +500,12 @@ int main(int argc, char **argv)
             video_path = argv[++a];
         else if (!strcmp(argv[a], "--profile") && a + 1 < argc)
             profile_path = argv[++a];
+        else if (!strcmp(argv[a], "--dsw0") && a + 1 < argc)
+            dsw0 = (int)strtol(argv[++a], NULL, 0);
+        else if (!strcmp(argv[a], "--dsw1") && a + 1 < argc)
+            dsw1 = (int)strtol(argv[++a], NULL, 0);
+        else if (!strcmp(argv[a], "--service"))
+            service = 1;
         else if (!strcmp(argv[a], "--hash") && a + 1 < argc)
             hash_path = argv[++a];
         else if (!strcmp(argv[a], "--no-psram"))
@@ -710,6 +720,15 @@ int main(int argc, char **argv)
         printf("start failed\n");
         return 2;
     }
+    uint8_t dips[SAL_DIP_PORTS];
+    sal_dip_defaults((sal_set_id_t)set, variant, dips);
+    if (dsw0 >= 0)
+        dips[SAL_DIP_DSW0] = (uint8_t)dsw0;
+    if (dsw1 >= 0)
+        dips[SAL_DIP_DSW1] = (uint8_t)dsw1;
+    if (service)
+        dips[SAL_DIP_IN0] &= (uint8_t)~0x80;
+    sal_set_dips(dips);
     printf("%s (%s, %s): loaded in %.0f ms, started in %.1f ms; %u bytes kept in SRAM\n", si->title,
            si->variant_set[variant], si->variant_name[variant], t_load * 1000, (now_s() - t0) * 1000,
            sal_fast_bytes());

@@ -124,6 +124,27 @@ typedef struct
 
 #define SAL_MAX_VARIANTS 8
 
+/* The DIP switches, as rows of a menu. A variant's ports hold every switch of
+ * the board, and only the ones listed here are offered. */
+typedef enum
+{
+    SAL_DIP_DSW0 = 0,
+    SAL_DIP_DSW1,
+    SAL_DIP_IN0,
+    SAL_DIP_PORTS
+} sal_dip_port_t;
+
+typedef struct
+{
+    const char *label;        /* "Lives" */
+    const char *help;         /* at most 40 characters */
+    uint8_t port;             /* sal_dip_port_t */
+    uint8_t mask;             /* its bits in that port */
+    uint8_t count;            /* its choices */
+    const char *const *names; /* what each choice is shown as */
+    const uint8_t *values;    /* the bits of each choice */
+} sal_dip_t;
+
 typedef struct
 {
     const char *title;   /* "Salamander" */
@@ -138,9 +159,21 @@ typedef struct
     uint8_t nfiles;
     /* MAME's defaults of the DIP switches, per variant */
     uint8_t dsw0[SAL_MAX_VARIANTS], dsw1[SAL_MAX_VARIANTS];
+    /* The switches a menu offers, per variant */
+    const sal_dip_t *dips[SAL_MAX_VARIANTS];
+    uint8_t ndips[SAL_MAX_VARIANTS];
 } sal_set_info_t;
 
 extern const sal_set_info_t sal_sets[SAL_SET_COUNT];
+
+/* The ports (SAL_DIP_PORTS bytes) a variant starts with: MAME's defaults. */
+void sal_dip_defaults(sal_set_id_t set, int variant, uint8_t *ports);
+
+/* The choice these ports hold for a switch, or -1 if they hold none of them. */
+int sal_dip_choice(const sal_dip_t *d, const uint8_t *ports);
+
+/* Puts a choice of a switch into the ports. */
+void sal_dip_select(const sal_dip_t *d, uint8_t *ports, int choice);
 
 /* A mask of a set's files: bit i = files[i]. */
 typedef uint64_t sal_files_t;
@@ -207,6 +240,10 @@ int sal_running(void);
 
 /* Power-on reset. */
 void sal_reset(void);
+
+/* The DIP switches (SAL_DIP_PORTS bytes), seen the next time the game reads
+ * them. sal_start sets the defaults. */
+void sal_set_dips(const uint8_t *ports);
 
 /* --- Running ---------------------------------------------------------------
  * A frame is the main CPU's sal_run_frame, then the sound board's frame from
