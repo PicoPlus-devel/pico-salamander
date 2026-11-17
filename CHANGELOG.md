@@ -13,6 +13,10 @@ An emulator of the arcade games Salamander and Lifeforce (Konami, 1986) for RP23
 
 # Changelog
 
+## Next release
+
+- Built with Pico SDK 2.3.1. This leaves a little more memory free, about 4.4 KB.
+
 ## v0.3
 
 - The DIP switches can now be changed in the settings menu: coins per credit, lives, difficulty, demo sounds and more. The game's own test screens are there too, as *Service mode*. Saving a change restarts the game.
