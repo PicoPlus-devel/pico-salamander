@@ -15,6 +15,7 @@ An emulator of the arcade games Salamander and Lifeforce (Konami, 1986) for RP23
 
 ## Next release
 
+- **Attract mode.** pico-bootLoader's new attract mode can now start the game with a random one of the sets on the card (*Salamander* or *Lifeforce*). Press any button to play yourself.
 - Built with Pico SDK 2.3.1. This leaves a little more memory free, about 4.4 KB.
 
 ## v0.3

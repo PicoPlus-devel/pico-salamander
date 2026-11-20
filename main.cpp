@@ -37,6 +37,10 @@
 #include "tusb.h"
 
 #include "FrensHelpers.h"
+#include "pico/rand.h"
+// pico-bootLoader attract mode may start this application with a random one of these sets
+// (bootloader builds only, see pico_shared/attract.h).
+FRENS_ATTRACT_DIRS("/roms/arcade/SALAMAND|/roms/arcade/LIFEFRCE");
 #include "FrensFonts.h"
 #include "gamepad.h"
 #include "menu.h"
@@ -372,6 +376,10 @@ static void writeLastSet(int set)
 {
     if (!sdOk || readLastSet() == set)
         return;
+#if FRENS_ATTRACT_APP
+    if (Frens::attractActive())
+        return; // attract mode's pick, not the player's
+#endif
     f_mkdir(GAMESAVEDIR);
     f_mkdir(SAVEDIR);
     FIL *fil = (FIL *)Frens::f_malloc(sizeof(FIL));
@@ -937,6 +945,20 @@ static void enterSets()
     }
     else
     {
+#if FRENS_ATTRACT_APP
+        // pico-bootLoader attract mode: a random set at once, no chooser
+        if (Frens::attractActive())
+        {
+            int pick = (int)(get_rand_32() % (uint32_t)navailable);
+            for (int s = 0; s < SAL_SET_COUNT; s++)
+                if (available[s] >= 0 && pick-- == 0)
+                {
+                    printf("Attract mode: set %d\n", s);
+                    startSet(s);
+                    return;
+                }
+        }
+#endif
         enterChooser();
     }
 }
@@ -1640,6 +1662,15 @@ static void processPerFrame()
         break;
     }
     case State::Failed:
+#if FRENS_ATTRACT_APP
+        // Attract mode: the reason on screen for a few seconds, then the
+        // loader's next application
+        {
+            static int attractFailedFrames = 0;
+            if (Frens::attractActive() && ++attractFailedFrames >= 5 * 60)
+                Frens::attractNext();
+        }
+#endif
         if (p1 & SAL_PAD_START)
         {
             enterSets();
@@ -1647,6 +1678,10 @@ static void processPerFrame()
         }
         break;
     case State::NoSets:
+#if FRENS_ATTRACT_APP
+        if (Frens::attractActive())
+            Frens::attractNext(); // nothing to show
+#endif
         break;
     }
 
